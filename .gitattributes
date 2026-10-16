@@ -1,0 +1,6 @@
+# shell 脚本必须保持 LF，否则在 Android 上会出现 \r 报错
+*.sh text eol=lf
+module.prop text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf

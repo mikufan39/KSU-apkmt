@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-app="idle">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#000000">
+<title>apkmt · 直装器</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============================================================ 图标库 -->
+<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-install" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4.6-4.6M12 15l-4.6-4.6M4.5 20.5h15"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.2c0-1 .8-1.7 1.7-1.7h3.6l2.3 2.4h8.7c.9 0 1.7.8 1.7 1.7v8.2c0 .9-.8 1.7-1.7 1.7H4.7c-.9 0-1.7-.8-1.7-1.7Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.6V12l3.1 1.9"/></symbol>
+  <symbol id="i-stethoscope" viewBox="0 0 24 24"><path d="M6 3.5v5.2a3.9 3.9 0 0 0 7.8 0V3.5M6 3.5H4.6M6 3.5h1.4M13.8 3.5h-1.4M13.8 3.5h1.4M9.9 12.6v2.6a5 5 0 0 0 10 0v-1.4"/><circle cx="19.9" cy="11.4" r="1.9"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9.2 5.5 15.7 12l-6.5 6.5"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.8 5.5 8.3 12l6.5 6.5"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19.5V6.8m0 0-5 5m5-5 5 5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M7.2 7.2l9.6 9.6m0-9.6-9.6 9.6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5.5 12.6l4.4 4.4 8.6-9.7"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 6.6v7.2"/><circle cx="12" cy="17.4" r="1.15" fill="currentColor" stroke="none"/><path d="M12 3.2 21 19.4H3Z"/></symbol>
+  <symbol id="i-pkg" viewBox="0 0 24 24"><path d="M12 3.2 20.4 7.6v8.8L12 20.8 3.6 16.4V7.6Z"/><path d="M3.6 7.6 12 12l8.4-4.4M12 12v8.8"/></symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24"><path d="M7.4 16.6 16.6 7.4M9.2 7.4h7.4v7.4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.4 12a7.4 7.4 0 1 1-2.2-5.2"/><path d="M19.7 4.6v4.6h-4.6"/></symbol>
+</defs></svg>
+
+<!-- ============================================================ 顶栏 -->
+<header id="topbar">
+  <div class="tb-slot tb-slot--lead">
+    <button class="navbtn hidden" id="btnBack" type="button" aria-label="返回">
+      <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-back"/></svg>
+    </button>
+  </div>
+  <div class="tb-mid">
+    <h1 class="tb-title" id="tbTitle">apkmt</h1>
+    <p class="tb-sub" id="tbSub">正在连接 KernelSU…</p>
+  </div>
+  <div class="tb-slot tb-slot--trail" aria-hidden="true"></div>
+  <div class="bootbar" id="bootBar" aria-hidden="true"><i></i></div>
+</header>
+
+<main id="main">
+
+  <!-- ========================================================== 安装 -->
+  <section class="view" id="view-install">
+
+    <div class="screen" id="scrBoot">
+      <article class="card">
+        <div class="card-hd"><span class="sk sk-line" style="width:104px"></span></div>
+        <div class="pkg">
+          <span class="sk sk-ico"></span>
+          <div class="pkg-tx">
+            <span class="sk sk-line" style="width:58%"></span>
+            <span class="sk sk-line sk-line--sm" style="width:82%"></span>
+          </div>
+        </div>
+        <div class="kv">
+          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:96px"></span></div>
+          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:72px"></span></div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-hd"><span class="sk sk-line" style="width:88px"></span></div>
+        <div class="card-bd stack">
+          <span class="sk sk-line sk-line--sm" style="width:100%"></span>
+          <span class="sk sk-line sk-line--sm" style="width:66%"></span>
+        </div>
+      </article>
+      <p class="scr-note" id="bootNote">正在自检运行环境…</p>
+    </div>
+
+    <div class="screen" id="scrBlocked" hidden>
+      <div class="blank">
+        <span class="blank-ico is-warn">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
+        </span>
+        <h2 class="blank-t" id="blockedTitle">没有检测到 KernelSU 环境</h2>
+        <p class="blank-p" id="blockedText">请在 KernelSU 管理器的「模块 → apkmt → 打开 WebUI」里使用本页面。</p>
+        <div class="blank-act">
+          <button class="btn btn--fill" id="btnRetryBoot" type="button">重新自检</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen" id="scrEmpty" hidden>
+      <div class="blank">
+        <span class="blank-ico">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-install"/></svg>
+        </span>
+        <h2 class="blank-t">选择要安装的包</h2>
+        <p class="blank-p">支持 .apkm / .apks / .xapk / .apk。已 root，安装过程不会弹出系统安装器。</p>
+        <div class="blank-act">
+          <button class="btn btn--fill" id="btnGoFiles" type="button">浏览文件</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="screen" id="scrInspecting" hidden>
+      <article class="card">
+        <div class="inspect-hd">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <div class="inspect-t">正在解析安装包</div>
+            <div class="inspect-p" id="inspectPath">—</div>
+          </div>
+        </div>
+        <div class="indet indet--line" aria-hidden="true"><i></i></div>
+      </article>
+      <article class="card">
+        <div class="pkg">
+          <span class="sk sk-ico"></span>
+          <div class="pkg-tx">
+            <span class="sk sk-line" style="width:64%"></span>
+            <span class="sk sk-line sk-line--sm" style="width:88%"></span>
+          </div>
+        </div>
+        <div class="kv">
+          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:110px"></span></div>
+          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:84px"></span></div>
+          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:130px"></span></div>
+        </div>
+      </article>
+    </div>
+
+    <div class="screen" id="scrFail" hidden>
+      <article class="card">
+        <div class="crit-head">
+          <span class="crit-ico is-warn">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert"/></svg>
+          </span>
+          <h2 class="crit-t" id="inspectFailTitle">无法分析这个包</h2>
+          <p class="crit-p" id="inspectFailText">—</p>
+        </div>
+        <div class="card-bd">
+          <div class="kv" id="inspectFailKv"></div>
+          <div class="crit-act">
+            <button class="btn btn--fill" id="btnFailPick" type="button">换一个包</button>
+            <button class="btn btn--tint" id="btnFailRetry" type="button">重试解析</button>
+          </div>
+        </div>
+      </article>
+      <article class="card">
+        <details class="disc">
+          <summary>原始错误码<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <pre class="code" id="inspectFailRaw">—</pre>
+        </details>
+      </article>
+    </div>
+
+    <div class="screen" id="scrPkg" hidden>
+      <article class="card" data-od-id="pkg-card">
+        <div class="pkg">
+          <span class="ico-slot" id="pkgIcoSlot">
+            <span class="ico-fb" id="pkgIcoFb">A</span>
+            <img class="ico-img hidden" id="pkgIco" alt="">
+          </span>
+          <div class="pkg-tx">
+            <h2 class="pkg-nm" id="pkgName">—</h2>
+            <p class="pkg-pkg" id="pkgId">—</p>
+          </div>
+        </div>
+        <div class="tags" id="pkgChips"></div>
+        <div class="kv" id="pkgKv"></div>
+        <div class="card-bd">
+          <button class="link-btn" id="btnReinspect" type="button">
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-refresh"/></svg>重新解析
+          </button>
+        </div>
+      </article>
+
+      <article class="card">
+        <button class="nav-row" id="btnManageSplits" type="button">
+          <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-pkg"/></svg></span>
+          <span class="nav-tx">
+            <span class="nav-t">分片</span>
+            <span class="nav-s" id="splitsSummary">—</span>
+          </span>
+          <svg class="ico nav-caret" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg>
+        </button>
+      </article>
+
+      <article class="card">
+        <div class="card-hd">安装方式</div>
+        <div class="card-bd">
+          <div class="seg" id="segMode" role="group" aria-label="分片选择方式">
+            <button type="button" data-mode="auto">推荐</button>
+            <button type="button" data-mode="all">全部</button>
+            <button type="button" data-mode="manual">手动</button>
+          </div>
+          <p class="hint" id="modeNote">按设备 ABI / 密度 / 系统语言自动挑选分片。</p>
+          <div class="segrow">
+            <span class="segrow-k">语言分片</span>
+            <div class="seg seg--sm" id="segLang" role="group" aria-label="语言分片策略">
+              <button type="button" data-lang="sys">系统语言</button>
+              <button type="button" data-lang="all">全部语言</button>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <details class="disc">
+          <summary>高级选项<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <div class="card-bd stack">
+            <div class="set-row">
+              <span class="set-tx">
+                <span class="set-t">允许降级安装</span>
+                <span class="set-s">已装版本更高时仍然覆盖。普通应用会返回 VERSION_DOWNGRADE。</span>
+              </span>
+              <input type="checkbox" class="switch" id="optDowngrade" aria-label="允许降级安装">
+            </div>
+            <div class="set-row">
+              <span class="set-tx">
+                <span class="set-t">授予运行时权限</span>
+                <span class="set-s">安装完成后立即授予清单里的运行时权限。</span>
+              </span>
+              <input type="checkbox" class="switch" id="optGrant" aria-label="授予运行时权限">
+            </div>
+            <div class="set-row">
+              <span class="set-tx">
+                <span class="set-t">安装者标识</span>
+                <span class="set-s">部分 ROM 要求声明安装来源，可解决包可见性问题。</span>
+              </span>
+              <select class="select" id="optInstaller" aria-label="安装者标识">
+                <option value="">不指定</option>
+                <option value="com.android.vending">应用商店</option>
+                <option value="com.android.shell">系统 Shell</option>
+              </select>
+            </div>
+            <div class="set-row">
+              <span class="set-tx">
+                <span class="set-t">关闭 adb 安装校验</span>
+                <span class="set-s">写入 verifier_verify_adb_installs=0，解决校验失败导致的安装中断。</span>
+              </span>
+              <input type="checkbox" class="switch" id="optVerifier" aria-label="关闭 adb 安装校验">
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <div class="dock">
+        <button class="btn btn--fill" id="btnInstall" type="button" disabled>立即安装</button>
+        <button class="btn btn--tint" id="btnTestWrite" type="button" disabled>仅校验写入</button>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ========================================================== 分片 -->
+  <section class="view" id="view-manager">
+    <div class="screen" id="scrManager">
+      <article class="card">
+        <div class="card-bd card-bd--pad">
+          <div class="seg" id="segPick" role="group" aria-label="分片选择">
+            <button type="button" data-pick="recommended">按推荐</button>
+            <button type="button" data-pick="all">全选</button>
+            <button type="button" data-pick="none">只装基础包</button>
+          </div>
+        </div>
+      </article>
+      <div id="splitList"></div>
+      <p class="scr-note" id="splitNote"></p>
+      <div class="dock">
+        <button class="btn btn--fill" id="btnSplitsDone" type="button">完成</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================== 选包 -->
+  <section class="view" id="view-files">
+    <div class="screen" id="scrFiles">
+      <article class="card">
+        <button class="nav-row" id="btnUp" type="button">
+          <span class="nav-tx">
+            <span class="nav-t">上一级</span>
+            <span class="nav-s" id="curDir">/sdcard/Download</span>
+          </span>
+          <svg class="ico nav-caret ico--up" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-up"/></svg>
+        </button>
+        <div class="quick" id="quickDirs"></div>
+      </article>
+
+      <article class="card">
+        <div class="set-row">
+          <span class="set-tx">
+            <span class="set-t">只看安装包</span>
+            <span class="set-s">.apk / .apkm / .apks / .xapk</span>
+          </span>
+          <input type="checkbox" class="switch" id="optFilter" checked aria-label="只显示安装包">
+        </div>
+      </article>
+
+      <div id="fileList"></div>
+
+      <p class="scr-note">
+        把从 APKMirror 下载的 .apkm / .apks / .xapk 放到 <code>/sdcard/Download</code> 就能在这里选到；读不到 <code>/sdcard</code> 时可以切到 <code>/data/media/0/Download</code>（同一个目录的 root 视角）。
+      </p>
+    </div>
+  </section>
+
+  <!-- ========================================================== 历史 -->
+  <section class="view" id="view-history">
+    <div class="screen" id="scrHistory">
+      <div id="historyList"></div>
+      <div class="dock">
+        <button class="btn btn--tint" id="btnReloadHistory" type="button">刷新</button>
+        <button class="btn btn--plain" id="btnClearHistory" type="button">清空记录</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================== 诊断 -->
+  <section class="view" id="view-diag">
+    <div class="screen" id="scrDiag">
+      <article class="card">
+        <div class="card-hd">设备与引擎</div>
+        <div class="kv" id="diagKv"><div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:56px"></span><span class="sk sk-line sk-line--sm" style="width:120px"></span></div></div>
+      </article>
+
+      <article class="card">
+        <div class="card-hd">安装校验</div>
+        <div class="kv" id="verifierKv"></div>
+        <div class="card-bd stack">
+          <p class="hint">关闭后 pm 安装不再走 Google 校验，可绕过校验失败导致的中断；恢复会写回你原来的值。</p>
+          <div class="crit-act">
+            <button class="btn btn--fill" id="btnVerifierOff" type="button">关闭校验</button>
+            <button class="btn btn--tint" id="btnVerifierRestore" type="button">恢复原值</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <details class="disc">
+          <summary>引擎原始信息<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <pre class="code" id="diagBox">正在读取…</pre>
+        </details>
+      </article>
+
+      <article class="card">
+        <details class="disc">
+          <summary>WebUI 自检日志<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <div class="disc-act">
+            <button class="mini" id="btnReloadUilog" type="button">刷新</button>
+            <button class="mini" id="btnClearUilog" type="button">清空</button>
+          </div>
+          <pre class="code" id="uiLogBox">正在读取…</pre>
+        </details>
+      </article>
+
+      <article class="card">
+        <div class="card-hd">关于</div>
+        <div class="kv" id="aboutBox"></div>
+      </article>
+
+      <div class="dock">
+        <button class="btn btn--tint" id="btnReloadDiag" type="button">重新自检</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================== 安装进行中 -->
+  <section class="view" id="view-running">
+    <div class="screen" id="scrRunning">
+      <div class="run-wrap">
+        <div class="ring ring--lg" id="runRing">
+          <svg class="ring-svg" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-track" cx="60" cy="60" r="52"/>
+            <circle class="ring-fill" id="runRingFill" cx="60" cy="60" r="52"/>
+          </svg>
+          <div class="ring-mid">
+            <span class="ring-pct" id="runPct">0%</span>
+            <span class="ring-lbl" id="runStep">第 0 / 0 个分片</span>
+          </div>
+        </div>
+        <h2 class="run-t" id="runStage">准备中</h2>
+        <p class="run-p" id="runDetail">正在创建安装会话…</p>
+      </div>
+      <article class="card">
+        <details class="disc">
+          <summary>运行日志<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <pre class="code code--log" id="runLog">（暂无输出）</pre>
+        </details>
+      </article>
+      <p class="scr-note">安装由 root 直接写入系统，请不要退出页面。</p>
+    </div>
+  </section>
+
+  <!-- ====================================================== 安装成功 -->
+  <section class="view" id="view-done">
+    <div class="screen" id="scrDone">
+      <div class="crit-head crit-head--pad">
+        <span class="crit-ico is-ok">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-check"/></svg>
+        </span>
+        <h2 class="crit-t" id="doneTitle">安装成功</h2>
+        <p class="crit-p" id="doneText">已写入系统，无需安装器确认。</p>
+      </div>
+      <article class="card"><div class="kv" id="doneKv"></div></article>
+      <div class="dock dock--stack">
+        <button class="btn btn--fill" id="btnOpenApp" type="button">打开应用</button>
+        <button class="btn btn--tint" id="btnAgain" type="button">再装一次</button>
+      </div>
+      <article class="card">
+        <details class="disc">
+          <summary>运行日志<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <pre class="code code--log" id="doneLog">（暂无输出）</pre>
+        </details>
+      </article>
+    </div>
+  </section>
+
+  <!-- ====================================================== 安装失败 -->
+  <section class="view" id="view-error">
+    <div class="screen" id="scrError">
+      <div class="crit-head crit-head--pad">
+        <span class="crit-ico is-bad">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"/></svg>
+        </span>
+        <h2 class="crit-t" id="errTitle">安装失败</h2>
+        <p class="crit-p" id="errText">—</p>
+      </div>
+      <article class="card">
+        <div class="card-hd">可以这样处理</div>
+        <div class="card-bd"><p class="fix" id="errFix">—</p></div>
+      </article>
+      <article class="card"><div class="kv" id="errKv"></div></article>
+      <div class="dock dock--stack">
+        <button class="btn btn--fill" id="btnErrRetry" type="button">重试安装</button>
+        <button class="btn btn--tint" id="btnErrChoose" type="button">换一个包</button>
+      </div>
+      <article class="card">
+        <details class="disc">
+          <summary>技术详情<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <pre class="code code--log" id="errLog">（暂无输出）</pre>
+        </details>
+      </article>
+    </div>
+  </section>
+
+</main>
+
+<nav id="tabbar">
+  <button class="tab" type="button" data-view="files">
+    <span class="tab-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-folder"/></svg></span>选包
+  </button>
+  <button class="tab" type="button" data-view="install">
+    <span class="tab-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-install"/></svg></span>安装
+  </button>
+  <button class="tab" type="button" data-view="history">
+    <span class="tab-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-clock"/></svg></span>历史
+  </button>
+  <button class="tab" type="button" data-view="diag">
+    <span class="tab-ico"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stethoscope"/></svg></span>诊断
+  </button>
+</nav>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="demo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

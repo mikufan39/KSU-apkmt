@@ -1,0 +1,10 @@
+# 仓库只放核心代码，以下模块安装辅助脚本与文档不进仓库
+/customize.sh
+/action.sh
+/uninstall.sh
+/README.md
+
+# 打包产物与临时文件
+*.zip
+*.log
+*.bak
