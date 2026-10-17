@@ -31,7 +31,7 @@
   // 两者走的是同一条 <img src> 加载路径，用来验证图标成功分支。
   var DEMO_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAACo0lEQVR42u3dVU8jcRQF8Pt1Fnd3d3d3d5d1+ZgUaUuNwhrPZyc80JCyQOnM/xI4N/klN5PJPJzzPlfEobn+8Q6vibzUuf6egLdMJfS/3xJB0ZwP/msS6HHOhP/F+jg9mb3hf04GxS7u4P98SgHF73nhf0wF2Sf2Aj6kgewTW/jv00H2e1L4vw8zQM55OPwD6yVy3AMFZIKcd3/4+1kgc6IK+LWXDTInuoDdHJA5d8PfyQWZFylgOw9k3m0BP7fyQeZFCti0HpBxkQI2CkDmRQpYLwSZdxP+1VoRSI9crRaD9MjVSglIj1wtl4L0yOVSKUiPXC6WgfTI5UI5SI9czleA9Eh4rhKkR8KzVSA9Ep6pBumR8LS1kBq5mKoB6ZGLyVqQHquAOpAeuZioB+mR0HgDSI+ExhpBeiQ02gTSI6ERayE1EhxuBumR4FALSI8EB1tBeiQ40AbSI4H+dpAeCfR1gPRIoNdaSI0EejpBesTf3QXSI/6ubpAe8Xf2gPSIv6MXpEd87X0gPeJrsxZSI77WfpAe8bUMgPTIefMgSI+cNw2B9FgFDIP0yHnjCEiPeBtGQXrEW28tpEa8dWMgPeKtHQfpEU/NBEiPeKonQXrEUzUF0iOeymmQHnFXTIP0iLt8BqRH3GWzID3iLp0D6bn5b9xZyTzIvNu/Jp4VL4DMixRQtAgyL1JAofWAjLst4LRgCWRepID8ZZB5d24InOatgMyJuqBxmrsKMieqgJOcNZA5915SOsleBznvv3fETrI3QM578JreSZb1EjnmSfckjzM3QfaL6aLqccYWyD4x3xM+Tt8G2edZV7WP03ZA8Yv7trwrdRcUO7FzXCl7oKcTJ8aVbH2cHiVOjytpHxRNNOYo8QBvmbzUOUo4xGviVFD/ABUvYmDyYsPhAAAAAElFTkSuQmCC';
 
-  // 自适应图标的前景层（v1.3.4）：108dp 画布，内容只占中间 72dp 可见安全区，
+  // 自适应图标的前景层（v1.3.5）：108dp 画布，内容只占中间 72dp 可见安全区，
   // 由 WebUI 按 icon_scale=1.5 放大后裁切。用内联 SVG data URI，走与真机
   // icon-cache/*.svg 完全相同的 <img src> 加载路径。
   var DEMO_FG_SVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
@@ -67,11 +67,11 @@
   var BUNDLES = {
     instagram: bundle('Instagram_v371.0.0.34.108_apkmirror.com.apkm', 'com.instagram.android', 'Instagram', '371.0.0.34.108', '371034108', '29', '34'),
     whatsapp: bundle('WhatsApp_Messenger_v2.25.11.76_apkmirror.com.apkm', 'com.whatsapp', 'WhatsApp', '2.25.11.76', '251176008', '24', '35'),
-    adaptive: bundle('演示应用_v1.3.4_adaptive.apkm', 'com.demo.adaptive', '演示应用', '1.3.4', '10304', '26', '35')
+    adaptive: bundle('演示应用_v1.3.5_adaptive.apkm', 'com.demo.adaptive', '演示应用', '1.3.5', '10305', '26', '35')
   };
 
   // 图标 / 应用名来源夹具：
-  //   adaptive —— v1.3.4 自适应图标：前景是 108dp 画布 SVG、背景是纯色，icon_scale=1.5，
+  //   adaptive —— v1.3.5 自适应图标：前景是 108dp 画布 SVG、背景是纯色，icon_scale=1.5，
   //               按「背景层 + 前景层」分层渲染（与桌面启动器遮罩一致）；
   //   instagram —— 普通 mipmap 位图图标（整图，icon_scale=1），走原有加载路径；
   //   whatsapp —— 故意没有图标，用来预览「ksu://icon/<包名> → 首字母兜底」的回退链。
@@ -112,7 +112,7 @@
 
   function linesInspect(b) {
     var L = [];
-    L.push('META|engine_version|1.3.4');
+    L.push('META|engine_version|1.3.5');
     L.push('META|bundle|' + b.path);
     L.push('META|bundle_size|' + b.size);
     L.push('META|bundle_type|' + b.type);
@@ -188,7 +188,7 @@
 
   function linesDiag() {
     return [
-      'DIAG|engine_version|1.3.4',
+      'DIAG|engine_version|1.3.5',
       'DIAG|uid|0',
       'DIAG|whoami|uid=0(root) gid=0(root)',
       'DIAG|unzip|/data/adb/ksu/bin/busybox unzip',
@@ -216,7 +216,7 @@
       ['D', 'Telegram', 0, 1749750000],
       ['F', 'Instagram_v371.0.0.34.108_apkmirror.com.apkm', 63963136, 1749812400],
       ['F', 'WhatsApp_Messenger_v2.25.11.76_apkmirror.com.apkm', 58130432, 1749711200],
-      ['F', '演示应用_v1.3.4_adaptive.apkm', 31457280, 1749900000],
+      ['F', '演示应用_v1.3.5_adaptive.apkm', 31457280, 1749900000],
       ['F', 'XposedInstaller_v4.6.2.apk', 4194304, 1749611000],
       ['F', 'notes.txt', 1284, 1749510000],
       ['F', 'IMG_20250612_181233.jpg', 3826176, 1749400000]
@@ -224,7 +224,7 @@
     '/sdcard/Download/APKMirror': [
       ['F', 'Instagram_v371.0.0.34.108_apkmirror.com.apkm', 63963136, 1749812400],
       ['F', 'WhatsApp_Messenger_v2.25.11.76_apkmirror.com.apkm', 58130432, 1749711200],
-      ['F', '演示应用_v1.3.4_adaptive.apkm', 31457280, 1749900000],
+      ['F', '演示应用_v1.3.5_adaptive.apkm', 31457280, 1749900000],
       ['F', 'YouTube_19.16.39_apkmirror.com.apkm', 120586240, 1749611000],
       ['F', 'Spotify_8.9.84.582_apkmirror.com.apkm', 41943040, 1749550000],
       ['F', 'Google_Maps_11.135.0.xapk', 96468992, 1749490000]
@@ -296,7 +296,7 @@
       return [[
         '09:31:02 boot ksu=true exec=function spawn=function mInfo=function moddir=' + MODDIR,
         '09:31:03 probe code=0 got=true err=',
-        '09:31:03 diag code=0 engine=1.3.4 sdk=' + DEV.sdk,
+        '09:31:03 diag code=0 engine=1.3.5 sdk=' + DEV.sdk,
         '09:31:05 inspect ok type=apkm entries=12 sel=6 bytes=52024394 unzip=busybox pkg=com.instagram.android',
         '09:31:22 install done exit=0 mode=auto lang=sys result={"pkg":"com.instagram.android"} err='
       ], 0];
@@ -371,7 +371,7 @@
     toast: function () { },
     fullScreen: function () { },
     enableEdgeToEdge: function () { },
-    moduleInfo: function () { return JSON.stringify({ moduleDir: MODDIR, version: 'v1.3.4', versionCode: 10304 }); },
+    moduleInfo: function () { return JSON.stringify({ moduleDir: MODDIR, version: 'v1.3.5', versionCode: 10305 }); },
     exit: function () { }
   };
 })();

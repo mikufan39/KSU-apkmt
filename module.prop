@@ -1,6 +1,6 @@
 id=apkmt
 name=APKM 直装器
-version=v1.3.4
-versionCode=10304
+version=v1.3.5
+versionCode=10305
 author=Mikufan
 description=在 WebUI 里直接安装 .apkm / .apks / .xapk / .apk 拆分包，无需额外 App。

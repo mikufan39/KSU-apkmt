@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ==============================================================================
-#  APKM 直装器 (apkmt) 引擎  v1.3.4
+#  APKM 直装器 (apkmt) 引擎  v1.3.5
 #  纯 POSIX sh。KernelSU WebUI / action.sh / CLI 共用同一套逻辑。
 #
 #  输出协议：每行一条记录，字段用 | 分隔（引擎输出保持纯 ASCII，中文在 WebUI 层）
@@ -40,14 +40,11 @@
 #  这样前端才能画出和系统启动器一致的图标，而不是一片空白/首字母。
 #  取不到时 META|icon 为空、source=none，WebUI 回退到“已装应用图标 / 首字母”。
 #
-#  热更新（v1.3.4）：模块更新后无需重启。customize.sh 请求 KernelSU 官方热安装
-#  （KernelSU main 分支 2026-10 起支持：设置 MODULE_HOT_INSTALL_REQUEST=true，
-#  安装结束后由 ksud 把暂存目录整体换上）；老版本 KernelSU / Magisk 的安装器不认这个
-#  机制，改由 customize.sh 自己把文件覆盖进 /data/adb/modules/<id>，装完即可用。
-#  安装器写的 update 标记（管理器据此显示“重启生效”）如果已经过期，会在 diag 阶段
-#  清掉——仅当 live 与 modules_update 里的关键文件大小一致（= 新版本确实已在生效）时，
-#  避免清掉真正的待更新状态；开机合并只看 modules_update 目录是否存在，不依赖该标记。
-#
+#  热更新（v1.3.5）：只支持 KernelSU 官方热安装协议——管理器导出 KSU_HAS_HOT_INSTALL=true
+#  时，customize.sh 设置 MODULE_HOT_INSTALL_REQUEST=true，ksud 在安装结束后把暂存目录
+#  整体换上（swap），更新和首次安装都无需重启。老版本 KernelSU / Magisk 没有这个能力，
+#  保持默认行为（暂存到 modules_update，重启后合并）并如实提示；本引擎不做文件同步，
+#  也不再清理安装器写的 update 标记（那个提示归管理器管）。
 #  用法：
 #    apkmt.sh diag
 #    apkmt.sh list <dir>
@@ -58,7 +55,7 @@
 #    apkmt.sh action
 # ==============================================================================
 
-APKMT_VERSION="1.3.4"
+APKMT_VERSION="1.3.5"
 STATE_DIR="/data/adb/apkmt"
 TMP_BASE="/data/local/tmp/apkmt"
 # 模块目录（v1.3.2）：预装阶段要把包内图标落到 webroot/icon-cache/。WebUI 的资源
@@ -109,42 +106,6 @@ moddir_get() {
   [ -n "$MC" ] || return 1
   APKMT_MODDIR="$MC"
   printf '%s' "$APKMT_MODDIR"
-}
-
-# 热更新（v1.3.4）留下的过期 update 标记：安装器更新模块时会写 <live>/update，管理器
-# 据此在模块列表显示“重启生效”；但 customize.sh 已经把新文件同步进 live（老版本
-# KernelSU / Magisk），或 KernelSU 官方热安装已把暂存目录整体换上（ksud swap），此时
-# 这个标记就是过期的，留着会让用户以为还要重启一次。
-# 只在「暂存目录不存在」或「live 与暂存目录的关键文件大小一致」（新版本确实已经在生效）
-# 时删除；不一致说明确实还没更新完，保留标记交给重启。开机合并时 ksud 的
-# handle_updated_modules() 只按 modules_update/<id> 目录是否存在处理，不读这个标记。
-# 结果写入 UPDATE_FLAG_STATE：none（本来没有）/ present（保留）/ cleared（已清）/ failed。
-UPDATE_FLAG_STATE="none"
-clear_stale_update_flag() {
-  UPDATE_FLAG_STATE="none"
-  MD=$(moddir_get 2>/dev/null)
-  [ -n "$MD" ] || return 0
-  [ -f "$MD/update" ] || return 0
-  # 暂存目录：/data/adb/modules/<id> 的兄弟目录 /data/adb/modules_update/<id>
-  # 注意 $MD/.. 是 /data/adb/modules，必须再上一级才是 /data/adb，所以用 dirname。
-  SD="$(dirname "$MD")/../modules_update/$(basename "$MD")"
-  if [ -d "$SD" ]; then
-    for f in module.prop bin/apkmt.sh webroot/app.js webroot/index.html; do
-      if [ ! -f "$MD/$f" ] || [ ! -f "$SD/$f" ]; then
-        UPDATE_FLAG_STATE="present"; return 0
-      fi
-      S1=$(stat -c %s "$MD/$f" 2>/dev/null)
-      S2=$(stat -c %s "$SD/$f" 2>/dev/null)
-      if [ -z "$S1" ] || [ "$S1" != "$S2" ]; then
-        UPDATE_FLAG_STATE="present"; return 0
-      fi
-    done
-  fi
-  if rm -f "$MD/update" 2>/dev/null; then
-    UPDATE_FLAG_STATE="cleared"
-  else
-    UPDATE_FLAG_STATE="failed"
-  fi
 }
 
 # 历史记录落盘位置（root 下用 STATE_DIR，非 root 调试时退回 TMP_BASE）
@@ -2303,9 +2264,6 @@ cmd_diag() {
       rec DIAG "icon_cache|NOT_WRITABLE"
     fi
   fi
-  # 热更新（v1.3.4）：清掉过期的 update 标记，免得管理器一直显示“重启生效”
-  clear_stale_update_flag
-  rec DIAG "update_flag|$UPDATE_FLAG_STATE"
   rec DIAG "device_sdk|$DEV_SDK"
   rec DIAG "device_release|$DEV_RELEASE"
   rec DIAG "device_model|$DEV_MODEL"
