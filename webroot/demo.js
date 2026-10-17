@@ -22,17 +22,22 @@
   var DEV = {
     sdk: '35', release: '15', model: 'Pixel 8 Pro',
     abi: 'arm64-v8a', abilist: 'arm64-v8a,armeabi-v7a,armeabi',
-    density: '420', locale: 'zh-CN'
+    density: '420', densityPhysical: '440', densityOverride: '420', locale: 'zh-CN'
   };
   var MODDIR = '/data/adb/modules/apkmt';
+
+  // demo 图标（96x96 渐变 PNG，由 _audit/tests/gen_demo_icon.py 生成）。
+  // 真机引擎给的是 icon-cache/<file>.png?v<ts> 同源相对 URL，demo 用同源 data URL，
+  // 两者走的是同一条 <img src> 加载路径，用来验证图标成功分支。
+  var DEMO_ICON = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAACo0lEQVR42u3dVU8jcRQF8Pt1Fnd3d3d3d5d1+ZgUaUuNwhrPZyc80JCyQOnM/xI4N/klN5PJPJzzPlfEobn+8Q6vibzUuf6egLdMJfS/3xJB0ZwP/msS6HHOhP/F+jg9mb3hf04GxS7u4P98SgHF73nhf0wF2Sf2Aj6kgewTW/jv00H2e1L4vw8zQM55OPwD6yVy3AMFZIKcd3/4+1kgc6IK+LWXDTInuoDdHJA5d8PfyQWZFylgOw9k3m0BP7fyQeZFCti0HpBxkQI2CkDmRQpYLwSZdxP+1VoRSI9crRaD9MjVSglIj1wtl4L0yOVSKUiPXC6WgfTI5UI5SI9czleA9Eh4rhKkR8KzVSA9Ep6pBumR8LS1kBq5mKoB6ZGLyVqQHquAOpAeuZioB+mR0HgDSI+ExhpBeiQ02gTSI6ERayE1EhxuBumR4FALSI8EB1tBeiQ40AbSI4H+dpAeCfR1gPRIoNdaSI0EejpBesTf3QXSI/6ubpAe8Xf2gPSIv6MXpEd87X0gPeJrsxZSI77WfpAe8bUMgPTIefMgSI+cNw2B9FgFDIP0yHnjCEiPeBtGQXrEW28tpEa8dWMgPeKtHQfpEU/NBEiPeKonQXrEUzUF0iOeymmQHnFXTIP0iLt8BqRH3GWzID3iLp0D6bn5b9xZyTzIvNu/Jp4VL4DMixRQtAgyL1JAofWAjLst4LRgCWRepID8ZZB5d24InOatgMyJuqBxmrsKMieqgJOcNZA5915SOsleBznvv3fETrI3QM578JreSZb1EjnmSfckjzM3QfaL6aLqccYWyD4x3xM+Tt8G2edZV7WP03ZA8Yv7trwrdRcUO7FzXCl7oKcTJ8aVbH2cHiVOjytpHxRNNOYo8QBvmbzUOUo4xGviVFD/ABUvYmDyYsPhAAAAAElFTkSuQmCC';
 
   /* ------------------------------------------------------------ 假包内容 */
 
   function bundle(name, pkg, label, ver, code, minApi, tgtApi) {
     var e = [
       { n: 'base.apk', s: 41960512, k: 'base', t: '', sel: '1', r: 'base_required' },
-      { n: 'split_config.arm64_v8a.apk', s: 8421376, k: 'abi', t: 'arm64-v8a', sel: '1', r: 'abi_primary' },
-      { n: 'split_config.armeabi_v7a.apk', s: 7864320, k: 'abi', t: 'armeabi-v7a', sel: '0', r: 'abi_secondary' },
+      { n: 'split_config.arm64_v8a.apk', s: 8421376, k: 'abi', t: 'arm64-v8a', sel: '1', r: 'abi_best' },
+      { n: 'split_config.armeabi_v7a.apk', s: 7864320, k: 'abi', t: 'armeabi-v7a', sel: '0', r: 'abi_lower' },
       { n: 'split_config.x86_64.apk', s: 9125888, k: 'abi', t: 'x86_64', sel: '0', r: 'abi_unsupported' },
       { n: 'split_config.xxhdpi.apk', s: 1153434, k: 'dpi', t: 'xxhdpi', sel: '1', r: 'dpi_best' },
       { n: 'split_config.hdpi.apk', s: 962560, k: 'dpi', t: 'hdpi', sel: '0', r: 'dpi_other' },
@@ -54,6 +59,15 @@
     whatsapp: bundle('WhatsApp_Messenger_v2.25.11.76_apkmirror.com.apkm', 'com.whatsapp', 'WhatsApp', '2.25.11.76', '251176008', '24', '35')
   };
 
+  // 图标 / 应用名来源夹具：instagram 带包内图标；whatsapp 故意没有图标，
+  // 用来预览「ksu://icon/<包名> → 首字母兜底」的回退链。
+  BUNDLES.instagram.icon = DEMO_ICON;
+  BUNDLES.instagram.iconSrc = 'root';
+  BUNDLES.instagram.labelSrc = 'json';
+  BUNDLES.whatsapp.icon = '';
+  BUNDLES.whatsapp.iconSrc = 'none';
+  BUNDLES.whatsapp.labelSrc = 'json';
+
   var current = BUNDLES.instagram;
 
   function bundleByPath(p) {
@@ -74,13 +88,16 @@
 
   function linesInspect(b) {
     var L = [];
-    L.push('META|engine_version|1.0.0');
+    L.push('META|engine_version|1.3.2');
     L.push('META|bundle|' + b.path);
     L.push('META|bundle_size|' + b.size);
     L.push('META|bundle_type|' + b.type);
     L.push('META|pkg|' + b.pkg);
     L.push('META|pkg_source|info.json');
     L.push('META|label|' + b.label);
+    L.push('META|label_src|' + (b.labelSrc || 'json'));
+    L.push('META|icon|' + (b.icon || ''));
+    L.push('META|icon_src|' + (b.iconSrc || 'none'));
     L.push('META|version|' + b.ver);
     L.push('META|version_code|' + b.code);
     L.push('META|min_api|' + b.minApi);
@@ -94,8 +111,11 @@
     L.push('META|device_abi|' + DEV.abi);
     L.push('META|device_abilist|' + DEV.abilist);
     L.push('META|device_density|' + DEV.density);
+    L.push('META|device_density_physical|' + DEV.densityPhysical);
+    L.push('META|device_density_override|' + DEV.densityOverride);
     L.push('META|device_locale|' + DEV.locale);
     L.push('META|selected_dpi|xxhdpi');
+    L.push('META|selected_abi|' + DEV.abi);
     L.push('META|unzip|/data/adb/ksu/bin/busybox unzip');
     L.push('META|tmp|/data/adb/apkmt/tmp/1042');
     L.push('META|free_bytes|41690132480');
@@ -142,7 +162,7 @@
 
   function linesDiag() {
     return [
-      'DIAG|engine_version|1.0.0',
+      'DIAG|engine_version|1.3.2',
       'DIAG|uid|0',
       'DIAG|whoami|uid=0(root) gid=0(root)',
       'DIAG|unzip|/data/adb/ksu/bin/busybox unzip',
@@ -156,6 +176,9 @@
       'DIAG|device_model|' + DEV.model,
       'DIAG|device_abi|' + DEV.abi + ' (' + DEV.abilist + ')',
       'DIAG|device_density|' + DEV.density,
+      'DIAG|device_density_physical|' + DEV.densityPhysical,
+      'DIAG|device_density_override|' + DEV.densityOverride,
+      'DIAG|selected_abi|' + DEV.abi,
       'DIAG|device_locale|' + DEV.locale,
       'DIAG|free_data|41690132480'
     ];
@@ -202,11 +225,15 @@
     return L;
   }
 
+  // 故意混两种格式：新的竖线记录（引擎 1.3.2 起）与旧版空格记录（升级前留下的），
+  // 用来验证 app.js 的 parseHistoryLine 归一化与原始文本兜底。
   var HISTORY = [
-    '1749812400|OK|com.instagram.android|371.0.0.34.108|auto|installed',
-    '1749711200|FAIL|com.whatsapp|2.25.11.76|auto|INSTALL_FAILED_UPDATE_INCOMPATIBLE',
-    '1749611000|OK|de.robv.android.xposed.installer|4.6.2|all|installed',
-    '1749550000|FAIL|com.google.android.youtube|19.16.39|manual|INSTALL_FAILED_MISSING_SPLIT'
+    '1749550000|FAIL|com.google.android.youtube|19.16.39|manual|INSTALL_FAILED_MISSING_SPLIT|/sdcard/Download/YouTube_19.16.39_apkmirror.com.apkm',
+    '1749611000|OK|de.robv.android.xposed.installer|4.6.2|all|installed|/sdcard/Download/XposedInstaller_v4.6.2.apk',
+    '1749711200|FAIL|com.whatsapp|2.25.11.76|auto|INSTALL_FAILED_UPDATE_INCOMPATIBLE|/sdcard/Download/WhatsApp_Messenger_v2.25.11.76_apkmirror.com.apkm',
+    '1749812400|OK|com.instagram.android|371.0.0.34.108|auto|installed|/sdcard/Download/Instagram_v371.0.0.34.108_apkmirror.com.apkm',
+    '2026-01-02T03:04:05 OK /sdcard/Download/Telegram_v11.2.0.apk pkg=org.telegram.messenger ver=11.2.0',
+    '2026-01-02T03:04:06 FAIL /sdcard/Download/XposedInstaller_v4.6.2.apk code=INSTALL_FAILED_MISSING_SPLIT msg=Missing split for host'
   ];
 
   /* ------------------------------------------------------------ 播放器 */
@@ -241,7 +268,7 @@
       return [[
         '09:31:02 boot ksu=true exec=function spawn=function mInfo=function moddir=' + MODDIR,
         '09:31:03 probe code=0 got=true err=',
-        '09:31:03 diag code=0 engine=1.0.0 sdk=' + DEV.sdk,
+        '09:31:03 diag code=0 engine=1.3.2 sdk=' + DEV.sdk,
         '09:31:05 inspect ok type=apkm entries=12 sel=6 bytes=52024394 unzip=busybox pkg=com.instagram.android',
         '09:31:22 install done exit=0 mode=auto lang=sys result={"pkg":"com.instagram.android"} err='
       ], 0];
@@ -316,7 +343,7 @@
     toast: function () { },
     fullScreen: function () { },
     enableEdgeToEdge: function () { },
-    moduleInfo: function () { return JSON.stringify({ moduleDir: MODDIR, version: 'v1.0.0', versionCode: 10000 }); },
+    moduleInfo: function () { return JSON.stringify({ moduleDir: MODDIR, version: 'v1.3.2', versionCode: 10302 }); },
     exit: function () { }
   };
 })();

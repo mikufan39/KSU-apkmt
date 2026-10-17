@@ -113,11 +113,108 @@
     while (n >= 1024 && i < u.length - 1) { n /= 1024; i += 1; }
     return (i === 0 ? n.toFixed(0) : (n < 10 ? n.toFixed(1) : n.toFixed(0))) + ' ' + u[i];
   }
+  // 时间：秒级 epoch（历史 / 文件 mtime）格式化成 MM-DD HH:MM；传入无法解析的字符串
+  // （旧记录时间戳损坏）时原样显示，绝不显示 NaN。
   function fmtTime(sec) {
-    var t = Number(sec || 0) * 1000;
-    if (!t) return '';
-    var d = new Date(t), p = function (x) { return (x < 10 ? '0' : '') + x; };
-    return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    var raw = (sec == null) ? '' : String(sec).replace(/^\s+|\s+$/g, '');
+    if (!raw) return '';
+    var n = Number(raw);
+    if (isFinite(n) && n > 0) {
+      var d = new Date(n * 1000);
+      if (!isNaN(d.getTime())) {
+        var p = function (x) { return (x < 10 ? '0' : '') + x; };
+        return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+      }
+    }
+    return isNaN(n) ? raw : '';
+  }
+
+  // 应用名：包内 label 优先，退回包名，再退回占位词（以前没有 label 的包只显示包名，
+  // 用户看不出这是哪个应用；hero / 标题 / 完成页都用它）。
+  function displayLabel(meta) {
+    var m = meta || {};
+    var label = String(m.label == null ? '' : m.label).replace(/^\s+|\s+$/g, '');
+    if (label) return label;
+    var pkg = String(m.pkg == null ? '' : m.pkg).replace(/^\s+|\s+$/g, '');
+    return pkg || '未知应用';
+  }
+
+  // 图标候选（按优先级）：包内提取的图标（引擎给的是相对 webroot 的 URL）→ 已安装应用的
+  // ksu:// 图标（只有包名非空才拼）→ 空数组，调用方回退到首字母兜底。
+  function iconCandidates(meta) {
+    var m = meta || {};
+    var out = [];
+    var icon = String(m.icon == null ? '' : m.icon).replace(/^\s+|\s+$/g, '');
+    if (icon) out.push(icon);
+    var pkg = String(m.pkg == null ? '' : m.pkg).replace(/^\s+|\s+$/g, '');
+    if (pkg) out.push('ksu://icon/' + pkg);
+    return out;
+  }
+
+  /* 历史记录：两种格式归一成同一条记录，无法识别时返回 null（调用方回退到原始文本）。
+     规范（引擎 1.3.1 起，竖线分隔，v1.3.2 起 META 追加 icon/label_src/icon_src）：
+       <epoch>|OK|<pkg>|<ver>|<mode>|installed|<bundle path>
+       <epoch>|FAIL|<pkg>|<ver>|<mode>|<错误码>|<bundle path>
+     旧版（<=1.2.x，空格分隔，仍留在老设备的 history.log 里）：
+       2026-01-02T03:04:05 OK /sdcard/Download/a.apk pkg=com.x ver=1.2
+       2026-01-02T03:04:06 FAIL /sdcard/Download/b.apk code=INSTALL_FAILED_X msg=...
+     raw 一律保留整行原文（含包路径 / msg），失败时由渲染层展开原文排查。 */
+  function parseHistoryLine(line) {
+    // 旧格式里 pkg= / ver= / code= 是空格分隔的独立 token，取第一个命中项
+    function tokenOf(text, key) {
+      var parts = String(text).split(/[ \t]+/);
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].indexOf(key + '=') === 0) return parts[i].slice(key.length + 1);
+      }
+      return '';
+    }
+    // 旧格式时间戳是本地时间 "YYYY-MM-DDTHH:MM:SS"；解析不了就保留字符串，让 fmtTime 兜底
+    function stampToEpoch(stamp) {
+      if (/^[0-9]+$/.test(stamp)) return Number(stamp);
+      var ms = Date.parse(stamp);
+      if (isNaN(ms)) return stamp;
+      return Math.floor(ms / 1000);
+    }
+
+    var s = (line == null) ? '' : String(line).replace(/^\s+|\s+$/g, '');
+    if (!s) return null;
+
+    var f = s.split('|');
+    if (f.length >= 5 && (f[1] === 'OK' || f[1] === 'FAIL')) {
+      return {
+        ok: f[1] === 'OK',
+        pkg: f[2] || '',
+        ver: f[3] || '',
+        mode: f[4] || '',
+        t: /^[0-9]+$/.test(f[0]) ? Number(f[0]) : f[0],
+        code: f[5] || '',
+        raw: s
+      };
+    }
+
+    var m = /^(\S+)[ \t]+(OK|FAIL)[ \t]+(.*)$/.exec(s);
+    if (!m) return null;
+    var body = m[3];
+    return {
+      ok: m[2] === 'OK',
+      pkg: tokenOf(body, 'pkg'),
+      ver: tokenOf(body, 'ver'),
+      mode: '',
+      t: stampToEpoch(m[1]),
+      code: tokenOf(body, 'code'),
+      raw: s
+    };
+  }
+
+  // 历史文本 → 记录数组（保持文件顺序：旧在前新在后，渲染层再倒序取最新 60 条）
+  function normalizeHistory(text) {
+    var lines = String(text == null ? '' : text).split('\n');
+    var out = [];
+    for (var i = 0; i < lines.length; i++) {
+      var rec = parseHistoryLine(lines[i]);
+      if (rec) out.push(rec);
+    }
+    return out;
   }
   function plural(n, one, many) { return String(n) + ' ' + (n === 1 ? one : many); }
 
@@ -156,21 +253,26 @@
   var KIND_ORDER = ['base', 'master', 'abi', 'dpi', 'lang', 'other'];
   var REASON_ZH = {
     base_required: '必需的基础包', module_master: '主分片（必需）',
-    abi_primary: '匹配设备主 ABI', abi_secondary: '次选 ABI（设备支持但非首选）', abi_unsupported: '设备不支持该 ABI',
+    abi_best: '最佳可用 ABI（按设备 abilist 优先序）', abi_lower: '次选 ABI（设备支持但非首选）', abi_unsupported: '设备不支持该 ABI',
     dpi_universal: '通用密度（nodpi/anydpi）', dpi_best: '最接近设备密度', dpi_other: '其他密度',
-    lang_all: '已选全部语言', lang_system: '匹配系统语言', lang_other: '其他语言',
-    feature_required: '功能分片（需一起安装）', not_apk: '不是 APK，忽略'
+    lang_all: '已选全部语言', lang_system: '匹配系统语言', lang_default: '英文回退（系统语言无对应分片）', lang_other: '其他语言',
+    feature_required: '功能分片（需一起安装）', not_apk: '不是 APK，忽略',
+    standalone_pack: '独立包（只装这一个）', standalone_other: '独立包的其它变体（未安装）'
   };
   var STAGE_ZH = {
     dry_run: '试运行', creating_session: '创建安装会话', writing: '写入分片',
     write_test_ok: '分片校验完成', committing: '提交安装', done: '完成'
   };
   var BUNDLE_ZH = { apkm: '.apkm', apks: '.apks', xapk: '.xapk', apk: '单个 APK', zip: '未知压缩包' };
+  // 应用名 / 图标来源（META label_src = json|manifest|none，icon_src = json|root|mipmap|none）
+  var LABEL_SRC_ZH = { json: '包内元数据', manifest: 'APK 清单', none: '未找到' };
+  var ICON_SRC_ZH = { json: '包内元数据', root: '包内图标文件', mipmap: 'APK 资源提取', none: '未找到' };
   var DIAG_ZH = {
     engine_version: '引擎版本', uid: 'UID', whoami: '运行身份', unzip: 'unzip', pm: 'pm 命令',
     busybox: 'busybox', ksu_busybox: 'KernelSU busybox', state_dir: '状态目录',
     state_dir_writable: '状态目录可写', device_sdk: 'SDK', device_release: 'Android',
-    device_model: '机型', device_abi: 'ABI', device_density: '密度', device_locale: '语言区域', free_data: '可用空间'
+    device_model: '机型', device_abi: 'ABI', device_density: '密度', device_locale: '语言区域', free_data: '可用空间',
+    device_density_physical: '物理密度', device_density_override: '密度覆盖', selected_abi: '选中 ABI', pkg_source: '包名来源'
   };
   var LS_ERR_ZH = {
     no_dir: '没有指定目录', need_absolute_path: '需要绝对路径',
@@ -191,6 +293,7 @@
     'CREATE_FAILED|无法创建安装会话|常见于 ROM 限制静默安装（开发者选项里的「USB 安装/通过 USB 安装应用」需要打开）。',
     'WRITE_FAILED|写入分片失败|重试一次；若反复失败，可能是分片体积过大或存储异常。',
     'COMMIT_FAILED|提交安装失败|展开下方的技术详情，可以看到系统给出的原始原因。',
+    'ENGINE_NO_OUTPUT|引擎没有任何输出|安装脚本没有被执行，或执行中途崩溃了。到「诊断」页确认 apkmt 模块已启用、/data/adb/modules/apkmt/bin/apkmt.sh 存在且可执行，然后重试。',
     'INSTALL_FAILED_ALREADY_EXISTS|应用已存在且签名不同|先卸载原应用再装，或换用签名一致的升级包。',
     'INSTALL_FAILED_INVALID_APK|APK 无效或已损坏|重新下载安装包。',
     'INSTALL_FAILED_INSUFFICIENT_STORAGE|存储空间不足|清理空间后重试。',
@@ -262,6 +365,7 @@
     files: [],
     lastResult: null,
     history: null,
+    historyText: '',
     installed: {},
     view: 'install',
     scr: '',
@@ -481,6 +585,7 @@
     S.checked = {};
     var args = ['--mode', 'auto', '--lang', S.lang];
     var raw = [];
+    var sawRecord = false;
     setBusy(true);
     showInspecting(path);
     setStatus('正在解析安装包…');
@@ -489,15 +594,18 @@
       if (tag !== 'o') return;
       parseRecords(line, {
         META: function (f) {
+          sawRecord = true;
           var val = f.slice(1).join('|');
           S.meta[f[0]] = val;
           // 设备信息两边都放：S.device 供顶栏/诊断，S.meta 供安装页信息表（renderPkg 读的是 S.meta.device_*）
           if (/^device_/.test(f[0])) S.device[f[0]] = val;
         },
         ENTRY: function (f) {
+          sawRecord = true;
           S.entries.push({ name: f[0], size: f[1], kind: f[2], token: f[3], sel: f[4] === '1', reason: f[5] });
         },
         RESULT: function (f) {
+          sawRecord = true;
           if (f[0] === 'FAIL') S.meta._fail = f[1] + '|' + f.slice(2).join('|');
         },
         DETAIL: function (f, l) { raw.push(l); },
@@ -511,6 +619,15 @@
         ulog('inspect FAIL code=' + code2 + ' msg=' + msg);
         S.focusAfterInspect = false;
         renderInspectFail(path, code2, msg || err || '');
+        if (done) done(false);
+        return;
+      }
+      // 传输层校验：桥接自己没报错，但引擎一条记录都没吐出来（脚本缺失 / 语法错误 /
+      // 权限不足 / shell 不对）。此时 S.meta 是空的，直接 renderPkg 会得到一张空白信息页。
+      if (!S.meta.bundle_type && (!sawRecord || code !== 0)) {
+        ulog('inspect no-output exit=' + code + ' records=' + (sawRecord ? 1 : 0) + ' entries=' + S.entries.length + ' err=' + String(err || '').slice(0, 160));
+        S.focusAfterInspect = false;
+        renderInspectFail(path, 'ENGINE_NO_OUTPUT', 'exit=' + code + ' ' + (err || ''));
         if (done) done(false);
         return;
       }
@@ -539,20 +656,33 @@
     var m = S.meta;
     var pkg = m.pkg || '';
 
-    setText('pkgName', m.label || pkg || '未知应用');
+    setText('pkgName', displayLabel(m));
     setText('pkgId', pkg || '包内没有 info.json，无法确定包名');
 
     var slot = byId('pkgIcoSlot'), img = byId('pkgIco'), fb = byId('pkgIcoFb');
-    var initial = (m.label || pkg || 'A').trim().charAt(0) || 'A';
+    var initial = displayLabel(m).trim().charAt(0) || 'A';
     if (fb) fb.textContent = initial;
     if (slot) slot.classList.remove('has-img');
     if (img) {
-      if (pkg) {
+      var cands = iconCandidates(m);
+      if (cands.length) {
+        // 逐个候选试：加载失败才换下一个；全部失败就藏起 <img>、露出首字母兜底。
+        // idx 只增不减，所以不会在候选之间来回重试（不会死循环）。
+        var idx = 0;
         img.classList.remove('hidden');
-        img.onerror = function () { img.classList.add('hidden'); if (slot) slot.classList.remove('has-img'); };
         img.onload = function () { if (slot) slot.classList.add('has-img'); };
-        img.src = 'ksu://icon/' + pkg;
+        img.onerror = function () {
+          idx += 1;
+          if (idx < cands.length) { img.src = cands[idx]; return; }
+          img.onerror = null;
+          img.removeAttribute('src');
+          img.classList.add('hidden');
+          if (slot) slot.classList.remove('has-img');
+        };
+        img.src = cands[0];
       } else {
+        img.onload = null;
+        img.onerror = null;
         img.classList.add('hidden');
         img.removeAttribute('src');
       }
@@ -565,17 +695,28 @@
       if (m.bundle_size) chips.appendChild(tag(fmtSize(m.bundle_size)));
       if (m.version) chips.appendChild(tag('v' + m.version));
       if (m.version_code) chips.appendChild(tag('build ' + m.version_code));
-      if (m.pkg_source && m.pkg_source !== 'info.json') chips.appendChild(tag('包名来源 ' + m.pkg_source, 'warn'));
+      // 包名来源：manifest / info.json 是打包方写入的权威值，不必吓唬用户；
+      // 只有从 toc.pb 猜出来的、或完全没解析出来时才用警告色。
+      if (m.pkg_source) {
+        var srcKind = (m.pkg_source === 'toc.pb(guess)' || m.pkg_source === 'none') ? 'warn' : '';
+        chips.appendChild(tag('包名来源 ' + m.pkg_source, srcKind));
+      }
     }
 
     var kv = byId('pkgKv');
     clear(kv);
     kvInto(kv, '文件名', m.bundle || S.bundle, true, true);
     if (m.label && m.label !== byId('pkgName').textContent) kvInto(kv, '应用名', m.label);
+    if (m.label_src) kvInto(kv, '应用名来源', LABEL_SRC_ZH[m.label_src] || m.label_src);
+    if (m.icon_src) kvInto(kv, '图标来源', ICON_SRC_ZH[m.icon_src] || m.icon_src);
     kvInto(kv, 'minSdk', m.min_api);
     kvInto(kv, 'targetSdk', m.target_api);
     kvInto(kv, '原生 ABI', m.device_abi);
     kvInto(kv, '密度 / 语言', (m.device_density || '?') + 'dpi · ' + (m.device_locale || '?'));
+    if (m.device_density_physical || m.device_density_override) {
+      kvInto(kv, '物理密度 / 覆盖', (m.device_density_physical || '?') + 'dpi · ' + (m.device_density_override || '未覆盖'));
+    }
+    if (m.selected_abi) kvInto(kv, '选中 ABI', m.selected_abi);
 
     renderSplitsSummary();
     renderSplits();
@@ -812,7 +953,7 @@
     setProgress(null, testWrite ? '准备写入' : '准备中', '正在创建安装会话…', '—');
     setScreen('running', 'scrRunning', { title: testWrite ? '正在校验' : '正在安装' });
 
-    var failed = false, ok = null;
+    var failed = false, ok = null, sawResult = false;
 
     runStream(buildInstallCmd(testWrite), function (line, tag) {
       if (tag !== 'o') return;
@@ -842,6 +983,7 @@
         },
         DETAIL: function (f, l) { appendLog('> ' + String(l).replace(/^[A-Z_]+\|/, '')); },
         RESULT: function (f) {
+          sawResult = true;
           if (f[0] === 'OK') ok = { pkg: f[1] || '', ver: f[2] || '', msg: f[3] || '' };
           else { failed = true; ok = { code: f[1], msg: f.slice(2).join('|') }; }
         },
@@ -851,16 +993,23 @@
       setBusy(false);
       ulog('install done exit=' + code + ' mode=' + S.mode + ' lang=' + S.lang + ' result=' + JSON.stringify(ok || null).slice(0, 220) + ' err=' + String(err || '').slice(0, 160));
       if (err) appendLog('stderr: ' + err.trim());
-      finishInstall(testWrite, failed, ok, err);
+      finishInstall(testWrite, failed, ok, err, sawResult, code);
     });
   }
 
-  function finishInstall(testWrite, failed, ok, err) {
+  function finishInstall(testWrite, failed, ok, err, sawResult, code) {
     if (failed || !ok) {
-      var c = (ok && ok.code) || 'COMMIT_FAILED';
+      // 传输层校验：一条 RESULT 都没收到又非正常退出，说明脚本根本没跑起来，
+      // 报 COMMIT_FAILED 会把用户引到错误方向。
+      var noOutput = !sawResult && code !== 0;
+      var c = (ok && ok.code) || (noOutput ? 'ENGINE_NO_OUTPUT' : 'COMMIT_FAILED');
+      var msg = ok && ok.msg;
+      if (c === 'ENGINE_NO_OUTPUT') {
+        msg = 'exit=' + code + (err ? ' ' + String(err).replace(/^\s+|\s+$/g, '').slice(0, 240) : '');
+      }
       S.errCode = c;
       setProgress(100, '未完成', '', null);
-      showError(c, ok && ok.msg, err);
+      showError(c, msg, err);
       return;
     }
     setProgress(100, testWrite ? '校验完成' : '完成', '', null);
@@ -1042,27 +1191,42 @@
   function loadHistory(force) {
     var box = byId('historyList');
     if (!box) return;
-    if (S.history && !force) { renderHistory(S.history); return; }
+    if (S.history && !force) { renderHistory(S.history, S.historyText); return; }
     clear(box);
     var card = el('article', 'card');
     card.appendChild(waitingRow('正在读取安装记录'));
     box.appendChild(card);
     exec('cat /data/adb/apkmt/history.log 2>/dev/null || cat /data/local/tmp/apkmt/history.log 2>/dev/null', {}).then(function (r) {
-      var s = (r.stdout || '').trim();
-      S.history = s ? s.split('\n') : [];
-      renderHistory(S.history);
-    }).catch(function () {
+      var s = (r.stdout || '').replace(/^\s+|\s+$/g, '');
+      // 读失败且没有任何输出：仍然显示空态，但把原因写进远程日志，不静默吞掉
+      if (!s && r.errno) ulog('history read errno=' + r.errno + ' stderr=' + String(r.stderr || '').slice(0, 160));
+      S.history = s ? normalizeHistory(s) : [];
+      S.historyText = s;
+      renderHistory(S.history, S.historyText);
+    }).catch(function (e) {
+      ulog('history exec failed ' + (e && e.message ? e.message : e));
       S.history = [];
-      renderHistory([]);
+      S.historyText = '';
+      renderHistory([], '');
     });
   }
 
-  function renderHistory(lines) {
+  // items：normalizeHistory 的输出（文件顺序，旧在前）；rawText：原始文本，用于兜底
+  function renderHistory(items, rawText) {
     var box = byId('historyList');
     if (!box) return;
     clear(box);
 
-    if (!lines.length) {
+    if (!items.length) {
+      // 文件里有内容但一条都识别不出来：给原始文本，别让用户看到「还没有安装记录」
+      var text = (rawText == null ? '' : String(rawText)).replace(/^\s+|\s+$/g, '');
+      if (text) {
+        var pre = el('article', 'card');
+        pre.appendChild(el('div', 'grp-hd', '原始记录'));
+        pre.appendChild(el('pre', 'code', text.split('\n').reverse().join('\n')));
+        box.appendChild(pre);
+        return;
+      }
       var card = el('article', 'card');
       var inner = el('div', 'blank-mini');
       inner.appendChild(el('h3', 'blank-t', '还没有安装记录'));
@@ -1072,45 +1236,23 @@
       return;
     }
 
-    var items = [], parsedAny = false;
-    for (var i = lines.length - 1; i >= 0; i--) {
-      var line = lines[i];
-      if (!line) continue;
-      var f = line.split('|');
-      if (f.length >= 5) {
-        parsedAny = true;
-        items.push({ ok: f[1] === 'OK', pkg: f[2], ver: f[3], mode: f[4], text: f.slice(5).join('|'), t: f[0] });
-      } else {
-        items.push({ raw: line });
-        if (items.length >= 60) break;
-      }
-      if (items.length >= 60) break;
-    }
-
-    if (!parsedAny) {
-      var pre = el('article', 'card');
-      pre.appendChild(el('div', 'grp-hd', '原始记录'));
-      pre.appendChild(el('pre', 'code', lines.slice().reverse().join('\n')));
-      box.appendChild(pre);
-      return;
-    }
+    // 追加写的日志：最新在文件末尾，倒序取，最多 60 行
+    var rows = [];
+    for (var i = items.length - 1; i >= 0 && rows.length < 60; i--) rows.push(items[i]);
 
     var lastOk = null;
-    for (var k = 0; k < items.length; k++) { if (items[k].ok && items[k].pkg) { lastOk = items[k]; break; } }
+    for (var k = 0; k < rows.length; k++) { if (rows[k].ok && rows[k].pkg) { lastOk = rows[k]; break; } }
 
     var list = el('article', 'card');
-    items.forEach(function (it) {
-      if (it.raw) {
-        list.appendChild(el('div', 'list-foot', it.raw));
-        return;
-      }
+    rows.forEach(function (it) {
       var row = el('div', 'hrow');
       var ic = el('span', 'hrow-ico ' + (it.ok ? 'is-ok' : 'is-bad'));
       ic.innerHTML = ico(it.ok ? 'check' : 'x');
       row.appendChild(ic);
       var tx = el('div', 'hrow-tx');
       tx.appendChild(el('div', 'hrow-t', it.pkg || '未知包名'));
-      var sub = [fmtTime(it.t), it.ver ? 'v' + it.ver : '', it.mode === 'auto' ? '推荐分片' : (it.mode === 'all' ? '全部分片' : (it.mode === 'manual' ? '手动分片' : it.mode))].filter(Boolean);
+      var mode = it.mode === 'auto' ? '推荐分片' : (it.mode === 'all' ? '全部分片' : (it.mode === 'manual' ? '手动分片' : it.mode));
+      var sub = [fmtTime(it.t), it.ver ? 'v' + it.ver : '', mode].filter(Boolean);
       tx.appendChild(el('div', 'hrow-s', sub.join(' · ')));
       row.appendChild(tx);
       row.appendChild(el('span', 'hrow-tag ' + (it.ok ? 'is-ok' : 'is-bad'), it.ok ? '成功' : '失败'));
@@ -1178,6 +1320,10 @@
           kvInto(kv, '系统', (vals.device_release || '?') + ' · SDK ' + (vals.device_sdk || '?'));
           kvInto(kv, 'ABI', vals.device_abi);
           kvInto(kv, '密度 / 区域', (vals.device_density || '?') + 'dpi · ' + (vals.device_locale || '?'));
+          if (vals.device_density_physical || vals.device_density_override) {
+            kvInto(kv, '物理密度 / 覆盖', (vals.device_density_physical || '?') + 'dpi · ' + (vals.device_density_override || '未覆盖'));
+          }
+          if (vals.selected_abi) kvInto(kv, '选中 ABI', vals.selected_abi);
           kvInto(kv, '可用空间', fmtSize(vals.free_data));
           kvInto(kv, '运行身份', (vals.whoami || '?') + ' · uid ' + (vals.uid || '?'));
           kvInto(kv, 'unzip', vals.unzip);
@@ -1201,7 +1347,7 @@
     kvInto(box, '引擎版本', S.meta.engine_version || '—');
     kvInto(box, '模块目录', MODDIR, true, true);
     kvInto(box, '引擎脚本', ENG, true, true);
-    kvInto(box, '包名与版本', '来自包内 info.json；没有时由 manifest 推断。');
+    kvInto(box, '包名与版本', '来自包内 manifest / info.json（打包方写入的权威值）；两者都没有时才从 toc.pb 猜测。');
   }
 
   function loadVerifier() {
