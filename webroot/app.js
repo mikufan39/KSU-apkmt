@@ -310,7 +310,8 @@
     busybox: 'busybox', ksu_busybox: 'KernelSU busybox', state_dir: '状态目录',
     state_dir_writable: '状态目录可写', device_sdk: 'SDK', device_release: 'Android',
     device_model: '机型', device_abi: 'ABI', device_density: '密度', device_locale: '语言区域', free_data: '可用空间',
-    device_density_physical: '物理密度', device_density_override: '密度覆盖', selected_abi: '选中 ABI', pkg_source: '包名来源'
+    device_density_physical: '物理密度', device_density_override: '密度覆盖', selected_abi: '选中 ABI', pkg_source: '包名来源',
+    update_flag: '更新标记'
   };
   var LS_ERR_ZH = {
     no_dir: '没有指定目录', need_absolute_path: '需要绝对路径',
@@ -1391,6 +1392,13 @@
           kvInto(kv, '运行身份', (vals.whoami || '?') + ' · uid ' + (vals.uid || '?'));
           kvInto(kv, 'unzip', vals.unzip);
           kvInto(kv, 'pm', vals.pm);
+          // update_flag：installer 写的「重启生效」标记是否仍然有效（v1.3.4）
+          var uf = vals.update_flag;
+          if (uf) {
+            kvInto(kv, '更新标记',
+              uf === 'present' ? '待重启合并（暂存与生效目录不一致）'
+                : (uf === 'cleared' ? '已清理（本次更新已热生效）' : '无'));
+          }
         }
       }
       if (vals.device_model) S.meta.device_model = vals.device_model;
