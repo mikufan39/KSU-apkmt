@@ -642,7 +642,13 @@ body[data-boot="1"] #tabbar { opacity: 0.45; pointer-events: none; }
   display: flex; align-items: center; justify-content: center;
 }
 .ico-img { width: 100%; height: 100%; object-fit: contain; }
+/* 分层图标（v1.3.3）：背景层绝对铺满，前景层按 icon_scale 放大后由 .ico-slot 的
+   overflow:hidden + 圆角裁切（等价 Android 自适应图标 108dp 画布 → 72dp 可见安全区）。
+   z-index 保证背景层在下、前景图与首字母兜底在上。 */
+.ico-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.ico-fg { position: relative; z-index: 1; transform-origin: center center; }
 .ico-fb {
+  position: relative; z-index: 1;
   font-family: var(--font-display); font-size: 24px; font-weight: 600;
   color: var(--muted); text-transform: uppercase;
 }

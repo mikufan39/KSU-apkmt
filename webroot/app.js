@@ -151,8 +151,42 @@
     return out;
   }
 
+  // 图标分层（v1.3.3）：自适应图标 = 背景层 + 前景层，引擎把各层信息分开给出：
+  //   META|icon       前景（或整张图标）URL，自适应图标是 108dp 画布、可见安全区 72dp；
+  //   META|icon_bg    '#rrggbb' / 'rgba(r,g,b,a)' 等合法 CSS 颜色 = 背景颜色，
+  //                   其余非空值 = 背景图 URL（只有自适应图标才有背景层）；
+  //   META|icon_scale 前景放大倍数（自适应图标 1.5，普通图标 1）。
+  // 这里只做「元数据 → 渲染计划」的纯换算，方便单测；真正落 DOM 在 renderPkg 里。
+  function iconPlan(meta) {
+    var m = meta || {};
+    var icon = String(m.icon == null ? '' : m.icon).replace(/^\s+|\s+$/g, '');
+    var bg = String(m.icon_bg == null ? '' : m.icon_bg).replace(/^\s+|\s+$/g, '');
+    var scale = Number(String(m.icon_scale == null ? '' : m.icon_scale).replace(/^\s+|\s+$/g, ''));
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    var bgLow = bg.toLowerCase();
+    var isColor = !!bg && (bg.charAt(0) === '#' || bgLow.indexOf('rgb(') === 0 || bgLow.indexOf('rgba(') === 0 || bgLow === 'transparent');
+    return {
+      fgUrl: icon,
+      bgColor: isColor ? bg : '',
+      bgUrl: (bg && !isColor) ? bg : '',
+      scale: scale,
+      fallback: displayLabel(m).trim().charAt(0) || 'A'
+    };
+  }
+
+  // icon_bg 的颜色按契约已与 CSS 兼容，直接赋给 style.backgroundColor；只有 8 位
+  // #AARRGGBB（老引擎可能输出，alpha 在前）才换算成 #rrggbb / rgba(...)，其余原样透传。
+  function iconBgCss(v) {
+    var s = String(v == null ? '' : v).replace(/^\s+|\s+$/g, '');
+    if (!/^#[0-9a-fA-F]{8}$/.test(s)) return s;
+    var a = parseInt(s.slice(1, 3), 16) / 255;
+    if (a >= 1) return '#' + s.slice(3, 9).toLowerCase();
+    return 'rgba(' + parseInt(s.slice(3, 5), 16) + ',' + parseInt(s.slice(5, 7), 16) + ',' + parseInt(s.slice(7, 9), 16) + ',' + (Math.round(a * 1000) / 1000) + ')';
+  }
+
   /* 历史记录：两种格式归一成同一条记录，无法识别时返回 null（调用方回退到原始文本）。
-     规范（引擎 1.3.1 起，竖线分隔，v1.3.2 起 META 追加 icon/label_src/icon_src）：
+     规范（引擎 1.3.1 起，竖线分隔，v1.3.2 起 META 追加 icon/label_src/icon_src，
+     v1.3.3 起再追加 icon_bg/icon_scale）：
        <epoch>|OK|<pkg>|<ver>|<mode>|installed|<bundle path>
        <epoch>|FAIL|<pkg>|<ver>|<mode>|<错误码>|<bundle path>
      旧版（<=1.2.x，空格分隔，仍留在老设备的 history.log 里）：
@@ -264,9 +298,13 @@
     write_test_ok: '分片校验完成', committing: '提交安装', done: '完成'
   };
   var BUNDLE_ZH = { apkm: '.apkm', apks: '.apks', xapk: '.xapk', apk: '单个 APK', zip: '未知压缩包' };
-  // 应用名 / 图标来源（META label_src = json|manifest|none，icon_src = json|root|mipmap|none）
-  var LABEL_SRC_ZH = { json: '包内元数据', manifest: 'APK 清单', none: '未找到' };
-  var ICON_SRC_ZH = { json: '包内元数据', root: '包内图标文件', mipmap: 'APK 资源提取', none: '未找到' };
+  // 应用名 / 图标来源（META label_src = json|manifest|arsc|none；v1.3.3 起 arsc = 从资源表
+  // 解析资源引用。icon_src = json|root|mipmap|arsc|adaptive|vector|none，后三个为 v1.3.3 新增）
+  var LABEL_SRC_ZH = { json: '包内元数据', manifest: 'APK 清单', arsc: '资源表(ARSC)', none: '未找到' };
+  var ICON_SRC_ZH = {
+    json: '包内元数据', root: '包内图标文件', mipmap: 'APK 资源提取',
+    arsc: '资源表(ARSC)', adaptive: '自适应图标', vector: '矢量图标', none: '未找到'
+  };
   var DIAG_ZH = {
     engine_version: '引擎版本', uid: 'UID', whoami: '运行身份', unzip: 'unzip', pm: 'pm 命令',
     busybox: 'busybox', ksu_busybox: 'KernelSU busybox', state_dir: '状态目录',
@@ -659,12 +697,36 @@
     setText('pkgName', displayLabel(m));
     setText('pkgId', pkg || '包内没有 info.json，无法确定包名');
 
+    // 图标：背景层（纯色 / 背景图）+ 前景层（整图或自适应前景）+ 首字母兜底。
+    // 自适应图标的前景是 108dp 画布、只有中间 72dp 可见，按 icon_scale（1.5）放大后由
+    // .ico-slot 的 overflow:hidden + 圆角裁切，效果等同桌面启动器的图标遮罩。
     var slot = byId('pkgIcoSlot'), img = byId('pkgIco'), fb = byId('pkgIcoFb');
-    var initial = displayLabel(m).trim().charAt(0) || 'A';
-    if (fb) fb.textContent = initial;
-    if (slot) slot.classList.remove('has-img');
+    var plan = iconPlan(m);
+    if (fb) fb.textContent = plan.fallback;
+    if (slot) {
+      slot.classList.remove('has-img');
+      slot.style.backgroundColor = iconBgCss(plan.bgColor);
+      // 背景图层动态创建（index.html 未预置）；重复解析时先清掉旧的，避免叠层
+      var oldBg = byId('pkgIcoBg');
+      if (oldBg && oldBg.parentNode) oldBg.parentNode.removeChild(oldBg);
+      if (plan.bgUrl) {
+        var bg = el('img', 'ico-bg');
+        bg.id = 'pkgIcoBg';
+        bg.alt = '';
+        bg.onerror = function () { if (bg.parentNode) bg.parentNode.removeChild(bg); };
+        slot.insertBefore(bg, slot.firstChild);
+        bg.src = plan.bgUrl;
+      }
+    }
     if (img) {
       var cands = iconCandidates(m);
+      // 只有包内图标（自适应前景层）在候选首位时才放大；ksu:// 是完整图标，放大会被裁掉
+      var fgScale = function (i) {
+        if (!plan.fgUrl || i !== 0 || plan.scale === 1) return '';
+        return 'scale(' + plan.scale + ')';
+      };
+      img.classList.add('ico-fg');
+      img.style.transform = fgScale(0);
       if (cands.length) {
         // 逐个候选试：加载失败才换下一个；全部失败就藏起 <img>、露出首字母兜底。
         // idx 只增不减，所以不会在候选之间来回重试（不会死循环）。
@@ -673,7 +735,7 @@
         img.onload = function () { if (slot) slot.classList.add('has-img'); };
         img.onerror = function () {
           idx += 1;
-          if (idx < cands.length) { img.src = cands[idx]; return; }
+          if (idx < cands.length) { img.style.transform = fgScale(idx); img.src = cands[idx]; return; }
           img.onerror = null;
           img.removeAttribute('src');
           img.classList.add('hidden');
@@ -683,6 +745,7 @@
       } else {
         img.onload = null;
         img.onerror = null;
+        img.style.transform = '';
         img.classList.add('hidden');
         img.removeAttribute('src');
       }
@@ -1348,6 +1411,8 @@
     kvInto(box, '模块目录', MODDIR, true, true);
     kvInto(box, '引擎脚本', ENG, true, true);
     kvInto(box, '包名与版本', '来自包内 manifest / info.json（打包方写入的权威值）；两者都没有时才从 toc.pb 猜测。');
+    kvInto(box, '应用名 / 图标', '优先级：info.json / manifest.json → resources.arsc（资源引用）→ manifest 字面量 → 文件名 / 首字母。');
+    kvInto(box, 'APK 图标', '.apk 的图标从资源表（resources.arsc）解析；自适应图标按「背景层 + 前景层」分层渲染，前景层取 108dp 画布、只保留中间 72dp 可见安全区。');
   }
 
   function loadVerifier() {

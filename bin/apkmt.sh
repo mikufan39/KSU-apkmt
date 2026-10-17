@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ==============================================================================
-#  APKM 直装器 (apkmt) 引擎  v1.3.2
+#  APKM 直装器 (apkmt) 引擎  v1.3.3
 #  纯 POSIX sh。KernelSU WebUI / action.sh / CLI 共用同一套逻辑。
 #
 #  输出协议：每行一条记录，字段用 | 分隔（引擎输出保持纯 ASCII，中文在 WebUI 层）
@@ -25,10 +25,19 @@
 #    info.json|manifest.json|meta.json  →  基础包内的 AndroidManifest.xml（权威）
 #    →  toc.pb 的 package_name 字段  →  strings 兜底猜测
 #
-#  图标与应用名（v1.3.2）：预装阶段 ksu://icon 还拿不到图，所以从包内提取——
-#    META|icon     相对模块 webroot 的图片 URL（icon-cache/<pkg>.<ext>?v<ts>）
-#    META|icon_src root（xapk/apkm 根目录 icon.png）| mipmap（APK 内 res/mipmap）
-#    META|label_src json（info/manifest/meta.json）| manifest（APK 清单字面量）
+#  图标与应用名（v1.3.2 起，v1.3.3 补齐资源表解析）：预装阶段 ksu://icon 还拿不到
+#  图，所以从包内提取——
+#    META|icon       相对模块 webroot 的图片 URL（icon-cache/<pkg>.<ext>?v<ts>）
+#    META|icon_bg    自适应图标的背景层：CSS 颜色（#rrggbb / rgba(...)）或图片 URL
+#    META|icon_scale 自适应图标前景层的放大倍数（108dp 画布取中间 72dp，=1.5）
+#    META|icon_src   arsc（资源表解析的位图）| adaptive（自适应图标）| vector（矢量）
+#                    | root（xapk/apkm 根目录 icon.png）| mipmap（res/mipmap 启发式）
+#    META|label_src  json（info/manifest/meta.json）| arsc（资源表字符串池）
+#                    | manifest（APK 清单字面量）
+#  Android 的 android:label / android:icon 绝大多数是 @string/xxx、@mipmap/xxx 资源
+#  引用，manifest 里只有资源 ID——必须查 resources.arsc 才能拿到字面量和真实文件。
+#  自适应图标（API 26+）拆成背景层（纯色/渐变）+ 前景层（矢量/位图）两层渲染，
+#  这样前端才能画出和系统启动器一致的图标，而不是一片空白/首字母。
 #  取不到时 META|icon 为空、source=none，WebUI 回退到“已装应用图标 / 首字母”。
 #
 #  用法：
@@ -41,7 +50,7 @@
 #    apkmt.sh action
 # ==============================================================================
 
-APKMT_VERSION="1.3.2"
+APKMT_VERSION="1.3.3"
 STATE_DIR="/data/adb/apkmt"
 TMP_BASE="/data/local/tmp/apkmt"
 # 模块目录（v1.3.2）：预装阶段要把包内图标落到 webroot/icon-cache/。WebUI 的资源
@@ -58,6 +67,11 @@ APKMT_ICON_BASE_MAX="${APKMT_ICON_BASE_MAX:-67108864}"
 APKMT_BASE_META_MAX="${APKMT_BASE_META_MAX:-268435456}"
 # 交给 AXML 解析器的最大字节数（AndroidManifest.xml 一般 < 100KB）
 AXML_MAX_BYTES="${AXML_MAX_BYTES:-524288}"
+# resources.arsc 只解析前这么多字节（超过就放弃资源表解析，退回旧启发式）。
+# 中转出来的是十六进制文本（2 字符/字节），8MB 资源表约 16MB 文本，小包通常 < 2MB。
+ARSC_MAX_BYTES="${ARSC_MAX_BYTES:-8388608}"
+# 矢量 XML 转出来的 SVG 上限（正常图标 SVG 只有几 KB）
+ICON_SVG_MAX="${ICON_SVG_MAX:-262144}"
 
 PATH="/system/bin:/system/xbin:$PATH"
 [ -d /data/adb/ksu/bin ] && PATH="/data/adb/ksu/bin:$PATH"
@@ -391,9 +405,10 @@ hex_file() { # $1 = 文件；stdout = 十六进制字节
   return 1
 }
 
-# AXML 十六进制流 -> "pkg|versionName|versionCode|minSdk|targetSdk|label"
-# label 只在 android:label 是字面量字符串时才给（绝大多数包是 @string/xxx 资源
-# 引用，取不到字面量，这时留空，由 JSON 元信息或文件名兜底）。
+# AXML 十六进制流 -> "pkg|versionName|versionCode|minSdk|targetSdk|label|label_ref|icon_ref"
+# label 只在 android:label 是字面量字符串时才给；label_ref / icon_ref 是资源引用
+# （@7f110050 这种）去掉 @ 之后的 8 位十六进制 ID，由 resources.arsc 解析成
+# 真正的应用名 / 图标文件（v1.3.3）。
 axml_meta() {
   awk '
   function b8(o) { return HX[b[o+1]] }
@@ -464,8 +479,14 @@ axml_meta() {
         if (an=="minSdkVersion") MINAPI=av
         else if (an=="targetSdkVersion") TGTAPI=av
       } else if (nm=="application") {
-        # 只认字符串：@string/xxx 是 REFERENCE(1)，硬当成字符串会显示成一串资源 ID。
-        if (an=="label" && (rv!=4294967295 || dt==3)) LBL=av
+        # android:label 是字面量就用；是资源引用（REFERENCE/ATTRIBUTE）就只记下 ID，
+        # 交给 resources.arsc 解析（v1.3.3），不要把 @7f110050 当应用名显示。
+        if (an=="label") {
+          if (rv!=4294967295 || dt==3) LBL=av
+          else if (dt==1 || dt==2) LREF=sprintf("%08x", da)
+        } else if (an=="icon") {
+          if (rv==4294967295 && (dt==1 || dt==2)) IREF=sprintf("%08x", da)
+        }
       }
     }
     if (nm=="application") sawapp=1
@@ -487,8 +508,8 @@ axml_meta() {
       else if (t==257) break
       p+=cs
     }
-    if (PKG=="" && VCODE=="" && MINAPI=="" && TGTAPI=="" && LBL=="") exit 1
-    printf "%s|%s|%s|%s|%s|%s\n", PKG, VNAME, VCODE, MINAPI, TGTAPI, LBL
+    if (PKG=="" && VCODE=="" && MINAPI=="" && TGTAPI=="" && LBL=="" && LREF=="" && IREF=="") exit 1
+    printf "%s|%s|%s|%s|%s|%s|%s|%s\n", PKG, VNAME, VCODE, MINAPI, TGTAPI, LBL, LREF, IREF
   }'
 }
 
@@ -498,8 +519,9 @@ axml_meta_of() { # $1 = AXML 文件；stdout = 元信息行
   printf '%s' "$L"
 }
 
-# 把 "pkg|versionName|versionCode|minSdk|targetSdk|label" 填进 META_*。
+# 把 "pkg|versionName|versionCode|minSdk|targetSdk|label|label_ref|icon_ref" 填进 META_*。
 # 基础包里的 manifest 是权威来源：可以覆盖 toc.pb 的猜测，但不会覆盖 info.json。
+# label_ref / icon_ref 只是资源 ID，等 probe_icon 阶段查 resources.arsc 才有结果。
 apkmeta_apply() { # $1 = 元信息行
   AKP=$(printf '%s' "$1" | cut -d'|' -f1)
   AKV=$(printf '%s' "$1" | cut -d'|' -f2)
@@ -507,6 +529,10 @@ apkmeta_apply() { # $1 = 元信息行
   AKN=$(printf '%s' "$1" | cut -d'|' -f4)
   AKG=$(printf '%s' "$1" | cut -d'|' -f5)
   AKL=$(printf '%s' "$1" | cut -d'|' -f6)
+  AKR=$(printf '%s' "$1" | cut -d'|' -f7)
+  AKI=$(printf '%s' "$1" | cut -d'|' -f8)
+  [ -n "$AKR" ] && META_LABEL_REF="$AKR"
+  [ -n "$AKI" ] && META_ICON_REF="$AKI"
   case "$META_PKG_SRC" in
     ""|none|toc.pb|"toc.pb(guess)")
       if [ -n "$AKP" ]; then META_PKG="$AKP"; META_PKG_SRC="manifest"; fi;;
@@ -829,27 +855,799 @@ prune_icons() {
   rm -f "$TMP/.oldico"
 }
 
-probe_icon() {
-  ICON_REL=""; ICON_SRC="none"; ICON_DIR=""
-  [ -n "$UNZIP" ] || return 0
-  MD=$(moddir_get 2>/dev/null) || return 0
-  [ -n "$MD" ] || return 0
-  ICON_DIR="$MD/webroot/icon-cache"
-  mkdir -p "$ICON_DIR" 2>/dev/null || { ICON_DIR=""; return 0; }
-  CE=""
-  # 1) 外层 bundle 根目录 icon.png（xapk/apkm）
-  if [ "$IS_SINGLE_ZIP" != 1 ]; then
-    CE=$(icon_entry_root)
-    if [ -n "$CE" ] && icon_install "$BUNDLE" "$CE" "root"; then prune_icons; return 0; fi
+# ------------------------------------------------ 资源表解析（resources.arsc，v1.3.3）
+#
+# Android 的 android:label / android:icon 基本都是资源引用（@string/app_name、
+# @mipmap/ic_launcher），manifest 里只有资源 ID。真正的应用名和图标文件只有
+# resources.arsc 知道，所以这里实现一个"只取指定资源 ID"的读取器：
+#   - 解析全局字符串池（UTF-8 与 UTF-16 两种编码）
+#   - 遍历 package / type 块，按 entryIndex 命中目标条目
+#   - 偏移表三种排布都支持：普通 uint32、FLAG_SPARSE（稀疏索引）、FLAG_OFFSET16
+#   - 值类型：字符串 / 引用 / 颜色(ARGB8,RGB8,ARGB4,RGB4) / 浮点 / 整数 / 布尔
+# 同一 ID 可能有多个 density 变体，arsc_pick 按设备当前密度用 AOSP 的
+# ResTable_config::isBetterThan 规则挑选（与系统资源匹配算法一致）。
+#
+# 矢量图标（VectorDrawable）无法直接当图片用，这里把它和它的组变换、描边、
+# 渐变一起翻译成 SVG；自适应图标（API 26+）的 background/foreground 两层分别
+# 翻译，前端叠起来显示（背景层铺满、前景层放大 1.5 倍并裁掉四周 18dp 出血）。
+
+arsc_lookup() { # $1 = 逗号分隔资源 ID（8 位十六进制，可带 0x）；stdin = arsc 十六进制
+  awk -v ids="$1" '
+  function b8(o) { return HX[substr(H, 2*o+1, 2)] }
+  function u16(o) { return b8(o) + 256*b8(o+1) }
+  function u32(o) { return b8(o) + 256*b8(o+1) + 65536*b8(o+2) + 16777216*b8(o+3) }
+  function u8(o) { return sprintf("%c", b8(o)) }
+  function utf8c(c) {
+    if (c < 128) return sprintf("%c", c)
+    if (c < 2048) return sprintf("%c%c", 192+int(c/64), 128+c%64)
+    if (c < 65536) return sprintf("%c%c%c", 224+int(c/4096), 128+int(c/64)%64, 128+c%64)
+    return sprintf("%c%c%c%c", 240+int(c/262144), 128+int(c/4096)%64, 128+int(c/64)%64, 128+c%64)
+  }
+  function f32(v,   s,e,m) {
+    if (v == 0) return "0"
+    s = 1
+    if (int(v/2147483648) == 1) { s = -1; v = v - 2147483648 }
+    e = int(v/8388608); m = v - e*8388608
+    if (e == 255) return "nan"
+    if (e == 0) return numstr(s * (m/8388608) * 0.000000000000000000000000000000000000011754943508222875)
+    return numstr(s * (1 + m/8388608) * (2 ^ (e - 127)))
+  }
+  function numstr(x) {
+    if (x == int(x) && x < 1e15 && x > -1e15) return sprintf("%.0f", x)
+    return sprintf("%.6f", x)
+  }
+  function cssc(dt, da,   a,r,g,b) {
+    if (dt == 28) {
+      a = int(da/16777216)%256; r = int(da/65536)%256; g = int(da/256)%256; b = da%256
+      if (a == 255) return sprintf("#%02x%02x%02x", r, g, b)
+      return sprintf("rgba(%d,%d,%d,%.3f)", r, g, b, a/255)
+    }
+    if (dt == 29) { r = int(da/65536)%256; g = int(da/256)%256; b = da%256
+                    return sprintf("#%02x%02x%02x", r, g, b) }
+    if (dt == 30) { a = int(da/4096)%256; r = int(da/256)%16; g = int(da/16)%16; b = da%16
+                    a = a*17; r = r*17; g = g*17; b = b*17
+                    if (a == 255) return sprintf("#%02x%02x%02x", r, g, b)
+                    return sprintf("rgba(%d,%d,%d,%.3f)", r, g, b, a/255) }
+    if (dt == 31) { r = int(da/256)%16; g = int(da/16)%16; b = da%16
+                    return sprintf("#%02x%02x%02x", r*17, g*17, b*17) }
+    return ""
+  }
+  function gstr(i,   o,q,ln,bl,k,j,c,c2,s2) {
+    if (i in GS) return GS[i]
+    if (i < 0 || i >= UCNT) { GS[i] = ""; return "" }
+    o = u32(UOFF + 4*i); q = US0 + o; s2 = ""
+    if (q > nb) { GS[i] = ""; return "" }
+    if (UTF8) {
+      ln = b8(q); k = 1
+      if (ln >= 128) { ln = (ln-128)*256 + b8(q+1); k = 2 }
+      bl = b8(q+k); k++
+      if (bl >= 128) { bl = (bl-128)*256 + b8(q+k); k++ }
+      for (j = 0; j < bl; j++) { c = b8(q+k+j); if (c == 0) break; s2 = s2 u8(q+k+j) }
+    } else {
+      ln = u16(q); k = 2
+      if (ln >= 32768) { ln = (ln-32768)*65536 + u16(q+2); k = 4 }
+      for (j = 0; j < ln; j++) {
+        c = u16(q+k+2*j)
+        if (c >= 55296 && c <= 56319 && j+1 < ln) {
+          c2 = u16(q+k+2*j+2)
+          if (c2 >= 56320 && c2 <= 57343) { c = 65536 + (c-55296)*1024 + (c2-56320); j++ }
+        }
+        s2 = s2 utf8c(c)
+      }
+    }
+    GS[i] = s2
+    return s2
+  }
+  function valstr(dt, da) {
+    if (dt == 3) return "S:" gstr(da)
+    if (dt == 1 || dt == 7) return "R:" sprintf("%08x", da)
+    if (dt == 28 || dt == 29 || dt == 30 || dt == 31) return "C:" cssc(dt, da)
+    if (dt == 4) return "F:" f32(da)
+    if (dt == 16 || dt == 17) return "I:" sprintf("%.0f", da)
+    if (dt == 18) return "I:" (da != 0 ? "1" : "0")
+    return "X:" dt ":" da
+  }
+  function scan_type(q, tid,   cnt,estart,flags,cfg,csz,dens,isdef,obase,ei,eo,off,e,esize,ef,v,dt,da,oflag,j,k) {
+    flags = b8(q+9); cnt = u32(q+12); estart = u32(q+16)
+    cfg = q + 20; csz = u32(cfg)
+    dens = (csz >= 16) ? u16(cfg+14) : 0
+    # 默认配置 = 除 density 外所有字段为 0（夜间模式、locale、uiMode 都在更后面，
+    # 旧实现只看前 16 字节，会把 values-night 里的颜色当成默认色）
+    isdef = 1
+    if (dens != 0) isdef = 0
+    for (j = 4; j < csz && isdef; j++) {
+      if (j == 14 || j == 15) continue
+      if (b8(cfg+j) != 0) isdef = 0
+    }
+    oflag = flags - int(flags/4)*4
+    obase = q + u16(q+2)
+    for (j = 1; j <= WN[tid]; j++) {
+      ei = WE[tid, j]
+      if (ei < 0) continue
+      eo = -1
+      if (oflag >= 2) {
+        if (ei < cnt) { off = u16(obase + 2*ei); eo = (off == 65535) ? -1 : off*4 }
+      } else if (oflag == 1) {
+        for (k = 0; k < cnt; k++) {
+          if (u16(obase + 4*k) == ei) { eo = u16(obase + 4*k + 2)*4; break }
+        }
+      } else {
+        if (ei < cnt) { off = u32(obase + 4*ei); eo = (off == 4294967295) ? -1 : off }
+      }
+      if (eo < 0) continue
+      e = q + estart + eo
+      if (e + 8 > nb) continue
+      esize = u16(e); ef = u16(e+2)
+      if (ef - int(ef/2)*2 == 1) continue
+      if (esize <= 0) esize = 8
+      v = e + esize
+      dt = b8(v+3); da = u32(v+4)
+      printf "%s|%d|%d|%s\n", WID[tid, j], dens, isdef, valstr(dt, da)
+    }
+  }
+  BEGIN {
+    for (i = 0; i < 256; i++) { h = sprintf("%02x", i); HX[h] = i; HX[toupper(h)] = i }
+    for (i = 0; i < 16; i++) { h = sprintf("%x", i); HD[h] = i; HD[toupper(h)] = i }
+    nids = split(ids, IDS, ",")
+    for (i = 1; i <= nids; i++) {
+      s = IDS[i]; sub(/^0x/, "", s); s = tolower(s)
+      v = 0
+      for (j = 1; j <= length(s); j++) v = v*16 + HD[substr(s, j, 1)]
+      tid = int(v/65536) % 256; ei = v % 65536
+      WID[tid, ++WN[tid]] = s
+      WE[tid, WN[tid]] = ei
+    }
+  }
+  { H = H $0 }
+  END {
+    nb = length(H) / 2
+    if (nb < 16) exit 1
+    if (u16(0) != 2) exit 1
+    p = u16(2)
+    if (u16(p) != 1) exit 1
+    UCNT = u32(p+8); UTF8 = (int(u32(p+16)/256) % 2 == 1)
+    US0 = p + u32(p+20); UOFF = p + 28
+    p = p + u32(p+4)
+    while (p + 8 <= nb) {
+      t = u16(p); cs = u32(p+4)
+      if (cs <= 0 || p + cs > nb) break
+      if (t == 512) {
+        phsz = u16(p+2); q = p + phsz; pend = p + cs
+        while (q + 8 <= pend) {
+          ct = u16(q); ccs = u32(q+4)
+          if (ccs <= 0) break
+          if (ct == 513) {
+            tid = b8(q+8)
+            if (tid in WN) scan_type(q, tid)
+          }
+          q = q + ccs
+        }
+      }
+      p = p + cs
+    }
+  }'
+}
+
+# 从 APK 里查资源 ID；stdout = 每行 "<id>|<density>|<isdefault>|<value>"
+arsc_get() { # $1 = apk 文件  $2 = 逗号分隔的 8 位十六进制 ID
+  AGP="$1"; AGI="$2"
+  [ -n "$AGP" ] && [ -f "$AGP" ] && [ -n "$UNZIP" ] && [ -n "$AGI" ] || return 1
+  # 一次 inspect 里 resources.arsc 可能被查 2~3 次（应用名、图标、图标的渐变填充），
+  # 而六倍体积的十六进制文本很贵：同一个 APK 只解一次、只转一次，之后复用缓存。
+  AGH="$TMP/.arsc.hx"
+  if [ ! -s "$AGH" ] || [ "${AGRSC_SRC:-}" != "$AGP" ]; then
+    AGT="$TMP/.arsctbl"; AGB="$TMP/.arsc"
+    zip_table "$AGP" > "$AGT" 2>/dev/null
+    AGS=$(awk -F'\t' 'tolower($2) == "resources.arsc" { print $1; exit }' "$AGT")
+    rm -f "$AGT"
+    [ -n "$AGS" ] || return 1
+    awk -v s="$AGS" -v m="$ARSC_MAX_BYTES" 'BEGIN{ exit !(s+0 > m+0) }' && return 1
+    $UNZIP -p "$AGP" resources.arsc 2>/dev/null | head -c "$ARSC_MAX_BYTES" > "$AGB" 2>/dev/null
+    [ -s "$AGB" ] || { rm -f "$AGB"; return 1; }
+    hex_file "$AGB" 2>/dev/null | tr -d ' \n\t\r' > "$AGH"
+    rm -f "$AGB"
+    [ -s "$AGH" ] || return 1
+    AGRSC_SRC="$AGP"
   fi
-  # 2) 读元信息时已经解出来的基础包：直接在里面找（零额外解压）
+  arsc_lookup "$AGI" < "$AGH"
+  return $?
+}
+
+# 在 arsc_get 的结果里挑一个值：任意密度(anydpi) > 设备密度的最优桶 > 默认配置
+arsc_pick() { # $1 = 资源 ID  $2 = 设备密度；arsc_get 输出（结果行）从 stdin 读
+  awk -F'|' -v id="$1" -v req="${2:-160}" '
+  function win(c, o) {
+    h = (c > o) ? c : o; l = (c > o) ? o : c
+    if (req >= h) return (c == h)
+    if (l >= req) return (c == l)
+    if ((2*l - req) * h > req*req) return (c == l)
+    return (c == h)
+  }
+  $1 == id && NF >= 4 {
+    d = $2 + 0
+    v = $4; for (i = 5; i <= NF; i++) v = v "|" $i
+    if (d == 65534) { any = v; hasany = 1; next }
+    if (d == 0) {
+      # 同一密度 0 可能有多条配置（默认 + night/uiMode 等），优先 isdefault=1 的那条
+      if (!defok) {
+        if (!hasdef || ($3 + 0) == 1) {
+          def = v; hasdef = 1
+          if (($3 + 0) == 1) defok = 1
+        }
+      }
+      next
+    }
+    if (!hasbest || win(d, bestd)) { bestd = d; best = v; hasbest = 1 }
+  }
+  END {
+    if (hasany) { print any; exit 0 }
+    if (hasbest) { print best; exit 0 }
+    if (hasdef) { print def; exit 0 }
+    exit 1
+  }'
+}
+
+# AXML 二进制 -> 行式 XML 文本（矢量图标/渐变/自适应图标都用它先展开）
+axml_dump() {
+  awk '
+  function b8(o) { return HX[substr(H, 2*o+1, 2)] }
+  function u16(o) { return b8(o) + 256*b8(o+1) }
+  function u32(o) { return b8(o) + 256*b8(o+1) + 65536*b8(o+2) + 16777216*b8(o+3) }
+  function u8(o) { return sprintf("%c", b8(o)) }
+  function utf8c(c) {
+    if (c < 128) return sprintf("%c", c)
+    if (c < 2048) return sprintf("%c%c", 192+int(c/64), 128+c%64)
+    if (c < 65536) return sprintf("%c%c%c", 224+int(c/4096), 128+int(c/64)%64, 128+c%64)
+    return sprintf("%c%c%c%c", 240+int(c/262144), 128+int(c/4096)%64, 128+int(c/64)%64, 128+c%64)
+  }
+  function f32(v,   s,e,m) {
+    if (v == 0) return "0"
+    s = 1
+    if (int(v/2147483648) == 1) { s = -1; v = v - 2147483648 }
+    e = int(v/8388608); m = v - e*8388608
+    if (e == 255) return "nan"
+    if (e == 0) return numstr(s * (m/8388608) * 0.000000000000000000000000000000000000011754943508222875)
+    return numstr(s * (1 + m/8388608) * (2 ^ (e - 127)))
+  }
+  function numstr(x) {
+    if (x == int(x) && x < 1e15 && x > -1e15) return sprintf("%.0f", x)
+    return sprintf("%.6f", x)
+  }
+  function gstr(i,   o,q,ln,bl,k,j,c,c2,s2) {
+    if (i in GS) return GS[i]
+    if (i < 0 || i >= UCNT) { GS[i] = ""; return "" }
+    o = u32(UOFF + 4*i); q = US0 + o; s2 = ""
+    if (q > nb) { GS[i] = ""; return "" }
+    if (UTF8) {
+      ln = b8(q); k = 1
+      if (ln >= 128) { ln = (ln-128)*256 + b8(q+1); k = 2 }
+      bl = b8(q+k); k++
+      if (bl >= 128) { bl = (bl-128)*256 + b8(q+k); k++ }
+      for (j = 0; j < bl; j++) { c = b8(q+k+j); if (c == 0) break; s2 = s2 u8(q+k+j) }
+    } else {
+      ln = u16(q); k = 2
+      if (ln >= 32768) { ln = (ln-32768)*65536 + u16(q+2); k = 4 }
+      for (j = 0; j < ln; j++) {
+        c = u16(q+k+2*j)
+        if (c >= 55296 && c <= 56319 && j+1 < ln) {
+          c2 = u16(q+k+2*j+2)
+          if (c2 >= 56320 && c2 <= 57343) { c = 65536 + (c-55296)*1024 + (c2-56320); j++ }
+        }
+        s2 = s2 utf8c(c)
+      }
+    }
+    GS[i] = s2
+    return s2
+  }
+  function tval(dt, da) {
+    if (dt == 3) return gstr(da)
+    if (dt == 1 || dt == 2) return "@" sprintf("%08x", da)
+    if (dt == 4) return f32(da)
+    if (dt == 16 || dt == 17) return sprintf("%.0f", da)
+    if (dt == 18) return (da != 0) ? "true" : "false"
+    if (dt == 28 || dt == 29 || dt == 30 || dt == 31) return sprintf("#%08x", da)
+    return ""
+  }
+  function esc(s) {
+    gsub(/&/, "\\&amp;", s); gsub(/</, "\\&lt;")
+    gsub(/>/, "\\&gt;", s); gsub(/"/, "\\&quot;", s)
+    return s
+  }
+  BEGIN { for (i = 0; i < 256; i++) { h = sprintf("%02x", i); HX[h] = i; HX[toupper(h)] = i } }
+  { H = H $0 }
+  END {
+    nb = length(H) / 2
+    if (nb < 16) exit 1
+    if (u16(0) != 3) exit 1
+    p = 8; nc = 0
+    while (p + 8 <= nb) {
+      t = u16(p); cs = u32(p+4)
+      if (cs <= 0 || p + cs > nb) break
+      CH[++nc] = p; CT[nc] = t
+      if (t == 1) {
+        UCNT = u32(p+8); UTF8 = (int(u32(p+16)/256) % 2 == 1)
+        US0 = p + u32(p+20); UOFF = p + 28
+      }
+      p = p + cs
+    }
+    for (i = 1; i <= nc; i++) {
+      q = CH[i]
+      if (CT[i] == 259) { print "</" gstr(u32(q+20)) ">"; continue }
+      if (CT[i] != 258) continue
+      tag = gstr(u32(q+20))
+      if (tag == "") continue
+      a = q + 16 + u16(q+24)
+      ac = u16(q+28); as = u16(q+26)
+      if (as < 20) as = 20
+      line = "<" tag
+      for (k = 0; k < ac; k++) {
+        nsidx = u32(a + k*as)
+        an = gstr(u32(a + k*as + 4))
+        rv = u32(a + k*as + 8)
+        if (an == "" || an == "xmlns") continue
+        av = ""
+        if (rv != 4294967295) av = gstr(rv)
+        else av = tval(b8(a + k*as + 15), u32(a + k*as + 16))
+        if (av == "") continue
+        pre = ""
+        if (nsidx != 4294967295) {
+          nu = gstr(nsidx)
+          if (index(nu, "xmlns") > 0) continue
+          if (index(nu, "aapt") > 0) pre = "aapt:"
+        }
+        line = line " " pre an "=\"" esc(av) "\""
+      }
+      if (i + 1 <= nc && CT[i+1] == 259 && gstr(u32(CH[i+1]+20)) == tag) { print line "/>"; i++ }
+      else print line ">"
+    }
+  }'
+}
+
+# 行式 XML -> SVG；$1=mode(vector|gradient) $2,$3=视口宽高 $4=裁剪框（可空）
+svg_gen() {
+  awk -v mode="$1" -v vw="$2" -v vh="$3" -v crop="$4" '
+  function hexv(s,   i, v, h) {
+    v = 0
+    for (i = 1; i <= length(s); i++) {
+      h = tolower(substr(s, i, 1))
+      v = v * 16 + ((h >= "0" && h <= "9") ? h + 0 : index("abcdef", h) + 9)
+    }
+    return v
+  }
+  function cc(c, a,   al, r, g, b) {
+    if (a == "") a = 1
+    if (length(c) != 9) return "none"
+    al = hexv(substr(c, 2, 2)) / 255 * a
+    r = hexv(substr(c, 4, 2)); g = hexv(substr(c, 6, 2)); b = hexv(substr(c, 8, 2))
+    if (al >= 0.999) return sprintf("#%02x%02x%02x", r, g, b)
+    return sprintf("rgba(%d,%d,%d,%.3f)", r, g, b, al)
+  }
+  function attr(s, key,   v) {
+    if (!match(s, key "=\"[^\"]*\"")) return ""
+    return substr(s, RSTART + length(key) + 2, RLENGTH - length(key) - 3)
+  }
+  function num(s, d) { return (s == "") ? d : s + 0 }
+  function is_self(s) { return (s ~ /\/>$/) }
+  function pathfill(s,   f) {
+    f = attr(s, "fillColor")
+    if (f ~ /^#[0-9a-fA-F]{8}$/) return cc(f, attr(s, "fillAlpha"))
+    if (f ~ /^#[0-9a-fA-F]{6}$/) return f
+    return "none"
+  }
+  function gtrans(s,   tx, ty, sx, sy, rot, px, py, o) {
+    tx = num(attr(s, "translateX"), 0); ty = num(attr(s, "translateY"), 0)
+    sx = num(attr(s, "scaleX"), 1); sy = num(attr(s, "scaleY"), 1)
+    rot = num(attr(s, "rotation"), 0)
+    px = num(attr(s, "pivotX"), 0); py = num(attr(s, "pivotY"), 0)
+    o = ""
+    if (tx != 0 || ty != 0) o = o sprintf("translate(%g,%g) ", tx, ty)
+    if (px != 0 || py != 0) o = o sprintf("translate(%g,%g) ", px, py)
+    if (rot != 0) o = o sprintf("rotate(%g) ", rot)
+    if (sx != 1 || sy != 1) o = o sprintf("scale(%g,%g) ", sx, sy)
+    if (px != 0 || py != 0) o = o sprintf("translate(%g,%g)", -px, -py)
+    return o
+  }
+  function elem_path(s, fill,   d, o, st, sw, lc, lj) {
+    d = attr(s, "pathData")
+    if (d == "") return ""
+    o = "<path d=\"" d "\" fill=\"" fill "\""
+    st = attr(s, "strokeColor")
+    if (st ~ /^#[0-9a-fA-F]{8}$/) o = o " stroke=\"" cc(st, attr(s, "strokeAlpha")) "\""
+    else if (st ~ /^#[0-9a-fA-F]{6}$/) o = o " stroke=\"" st "\""
+    sw = attr(s, "strokeWidth")
+    if (sw != "" && (st ~ /^#/)) o = o " stroke-width=\"" sw "\""
+    if (attr(s, "fillType") == "1") o = o " fill-rule=\"evenodd\""
+    lc = attr(s, "strokeLineCap")
+    if (lc == "1") o = o " stroke-linecap=\"round\""
+    else if (lc == "2") o = o " stroke-linecap=\"square\""
+    lj = attr(s, "strokeLineJoin")
+    if (lj == "1") o = o " stroke-linejoin=\"round\""
+    else if (lj == "2") o = o " stroke-linejoin=\"bevel\""
+    return o "/>"
+  }
+  function stopline(s,   c, of, al, col) {
+    c = attr(s, "color"); of = attr(s, "offset"); if (of == "") of = 0
+    if (length(c) != 9) return ""
+    col = "#" substr(c, 4, 2) substr(c, 6, 2) substr(c, 8, 2)
+    al = hexv(substr(c, 2, 2)) / 255
+    if (al >= 0.999) return sprintf("<stop offset=\"%s\" stop-color=\"%s\"/>", of, col)
+    return sprintf("<stop offset=\"%s\" stop-color=\"%s\" stop-opacity=\"%.3f\"/>", of, col, al)
+  }
+  function graddef(s, gid,   t, x1, y1, x2, y2, cx, cy, r, ang, a, tile, o) {
+    t = attr(s, "type"); if (t == "") t = "0"
+    tile = attr(s, "tileMode")
+    if (t == "0") {
+      x1 = attr(s, "startX"); y1 = attr(s, "startY")
+      x2 = attr(s, "endX"); y2 = attr(s, "endY")
+      ang = attr(s, "angle")
+      if (ang != "" && x1 == "" && y1 == "" && x2 == "" && y2 == "") {
+        a = (ang + 0) * 3.14159265358979 / 180
+        r = (vw > vh ? vw : vh) / 2
+        cx = vw / 2; cy = vh / 2
+        x1 = cx - r * cos(a); y1 = cy + r * sin(a)
+        x2 = cx + r * cos(a); y2 = cy - r * sin(a)
+      }
+      if (x1 == "") x1 = 0
+      if (y1 == "") y1 = 0
+      if (x2 == "") x2 = vw
+      if (y2 == "") y2 = vh
+      o = sprintf("<linearGradient id=\"%s\" gradientUnits=\"userSpaceOnUse\" x1=\"%s\" y1=\"%s\" x2=\"%s\" y2=\"%s\"", gid, x1, y1, x2, y2)
+      if (tile == "1") o = o " spreadMethod=\"repeat\""
+      else if (tile == "2") o = o " spreadMethod=\"reflect\""
+      gend = "linearGradient"
+      return o ">"
+    }
+    if (t == "1") {
+      cx = attr(s, "centerX"); cy = attr(s, "centerY"); r = attr(s, "gradientRadius")
+      if (cx == "") cx = vw / 2
+      if (cy == "") cy = vh / 2
+      if (r == "") r = (vw > vh ? vw : vh) / 2
+      o = sprintf("<radialGradient id=\"%s\" gradientUnits=\"userSpaceOnUse\" cx=\"%s\" cy=\"%s\" r=\"%s\"", gid, cx, cy, r)
+      if (tile == "1") o = o " spreadMethod=\"repeat\""
+      else if (tile == "2") o = o " spreadMethod=\"reflect\""
+      gend = "radialGradient"
+      return o ">"
+    }
+    gend = ""
+    return ""
+  }
+  BEGIN {
+    if (mode == "") mode = "vector"
+    if (vw == "") vw = 24
+    if (vh == "") vh = 24
+    vb = (crop != "") ? crop : "0 0 " vw " " vh
+    state = "idle"; nd = 0; gbuf = ""; nstop = 0; gend = ""
+  }
+  { L = $0 }
+  L == "" { next }
+  state == "idle" {
+    if (mode == "gradient") {
+      if (L !~ /<gradient[ \/>]/) exit 1
+      gopen = graddef(L, "g0")
+      if (gopen == "") exit 1
+      printf "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"%s\" width=\"100%%\" height=\"100%%\">\n", vb
+      print "<defs>" gopen
+      state = "rootgrad"
+      next
+    }
+    if (L !~ /<vector[ \/>]/) exit 1
+    s = attr(L, "viewportWidth"); if (s != "") vw = s
+    s = attr(L, "viewportHeight"); if (s != "") vh = s
+    if (crop == "") vb = "0 0 " vw " " vh
+    printf "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"%s\" width=\"100%%\" height=\"100%%\">\n", vb
+    state = "vector"
+    next
+  }
+  state == "rootgrad" {
+    if (L ~ /<item /) { print stopline(L); nstop++; next }
+    if (L ~ /<\/gradient>/) {
+      if (nstop == 0) print "<stop offset=\"0\" stop-color=\"#888888\"/><stop offset=\"1\" stop-color=\"#444444\"/>"
+      printf "</%s></defs>\n<rect width=\"%s\" height=\"%s\" fill=\"url(#g0)\"/>\n</svg>\n", gend, vw, vh
+      exit 0
+    }
+    next
+  }
+  L ~ /<\/vector>/ { print "</svg>"; exit 0 }
+  L ~ /<\/group>/ { print "</g>"; next }
+  L ~ /<group[ \/>]/ {
+    t = gtrans(L)
+    if (t == "") print "<g>"
+    else printf "<g transform=\"%s\">\n", t
+    next
+  }
+  L ~ /<clip-path/ || L ~ /<\/clip-path>/ { next }
+  L ~ /<aapt:attr / {
+    if (attr(L, "name") ~ /fillColor/) { want = "fill"; nd++; gid = "g" nd; gbuf = "" }
+    else if (attr(L, "name") ~ /strokeColor/) { want = "stroke"; nd++; gid = "g" nd; gbuf = "" }
+    else want = ""
+    next
+  }
+  L ~ /<\/aapt:attr>/ { next }
+  L ~ /<gradient[ \/>]/ { gbuf = graddef(L, gid); next }
+  L ~ /<item / && gbuf != "" { gbuf = gbuf "\n" stopline(L); next }
+  L ~ /<path[ \/>]/ {
+    if (is_self(L) && gbuf == "") { print elem_path(L, pathfill(L)); next }
+    pline = L; pdef = ""; purl = ""
+    next
+  }
+  L ~ /<\/path>/ {
+    if (gbuf != "" && gid != "") { pdef = gbuf; purl = "url(#" gid ")" }
+    if (pdef != "") { print "<defs>" pdef; if (gend != "") print "</" gend ">"; print "</defs>" }
+    if (pline != "") print elem_path(pline, (purl != "" ? purl : pathfill(pline)))
+    gbuf = ""; pdef = ""; purl = ""; pline = ""
+    next
+  }
+  { next }'
+}
+
+# 需要把基础包落到磁盘时统一走这里（元信息解析与资源表解析共用，只解一次）。
+# $1 = 允许的最大字节数（空则用 APKMT_BASE_META_MAX），超过就放弃。
+ensure_base_apk() {
+  [ -n "$BASE_APK_FILE" ] && [ -f "$BASE_APK_FILE" ] && return 0
+  [ -n "$BASE_NAME" ] && [ -n "$BUNDLE" ] && [ -n "$UNZIP" ] || return 1
+  EBSZ=$(tbl_get "$BASE_NAME" "$TBL"); [ -n "$EBSZ" ] || EBSZ=0
+  EBL="${1:-$APKMT_BASE_META_MAX}"
+  awk -v s="$EBSZ" -v m="$EBL" 'BEGIN{ exit !(s+0 > 0 && s+0 <= m+0) }' || return 1
+  EBA="$TMP/.base.apk"
+  $UNZIP -p "$BUNDLE" "$BASE_NAME" > "$EBA" 2>/dev/null
+  [ -s "$EBA" ] || { rm -f "$EBA"; return 1; }
+  BASE_APK_FILE="$EBA"
+  return 0
+}
+
+# APK 里的某个 XML 条目 -> 行式 XML 文本；$1=apk $2=条目名 $3=输出文件
+apk_entry_text() {
+  AETB="$TMP/.axml.bin"
+  $UNZIP -p "$1" "$2" 2>/dev/null | head -c "$AXML_MAX_BYTES" > "$AETB" 2>/dev/null
+  [ -s "$AETB" ] || { rm -f "$AETB"; return 1; }
+  hex_file "$AETB" 2>/dev/null | tr -d ' \n\t\r' | axml_dump > "$3" 2>/dev/null
+  rm -f "$AETB"
+  [ -s "$3" ] || { rm -f "$3"; return 1; }
+  return 0
+}
+
+# SVG 合法性：以 <svg 开头且体积在限内
+svg_ok() {
+  [ -n "$1" ] && [ -f "$1" ] && [ -s "$1" ] || return 1
+  SVS=$(stat -c %s "$1" 2>/dev/null); [ -n "$SVS" ] || return 1
+  [ "$SVS" -le "$ICON_SVG_MAX" ] 2>/dev/null || return 1
+  head -c 4 "$1" 2>/dev/null | grep -q '^<svg' 2>/dev/null
+}
+
+# 把文件放进 icon-cache：$1=源文件 $2=扩展名 $3=后缀（bg/空）
+# 目标文件名只由净化后的包名 + 后缀生成，杜绝 zip 条目名带来的 ../ 穿越。
+icon_put() {
+  [ -n "$ICON_DIR" ] && [ -f "$1" ] || return 1
+  IPE="$2"; IPS="$3"
+  ISAFE=$(printf '%s' "$META_PKG" | sed 's/[^A-Za-z0-9._-]/_/g' | cut -c1-96)
+  [ -n "$ISAFE" ] || ISAFE="bundle"
+  case "$ISAFE" in .|..) ISAFE="bundle";; esac
+  IPN="$ISAFE"
+  [ -n "$IPS" ] && IPN="$ISAFE-$IPS"
+  ITMP="$ICON_DIR/.tmp.$$.$IPE"
+  cp "$1" "$ITMP" 2>/dev/null || { rm -f "$ITMP"; return 2; }
+  mv -f "$ITMP" "$ICON_DIR/$IPN.$IPE" 2>/dev/null || { rm -f "$ITMP"; return 2; }
+  ITS=$(date +%s 2>/dev/null); [ -n "$ITS" ] || ITS=0
+  ICON_PUT_REL="icon-cache/$IPN.$IPE?v$ITS"
+  return 0
+}
+
+# 视口 -> 居中裁掉四周 1/6 的裁剪框（自适应图标只看中间 72dp / 108dp）
+icon_crop() { # $1=宽 $2=高
+  awk -v w="$1" -v h="$2" 'BEGIN{ printf "%.3f %.3f %.3f %.3f", w/6, h/6, w*2/3, h*2/3 }'
+}
+
+# 把一个资源值渲染成图层的图片文件：$1=apk $2=资源值 $3=后缀(bg/空) $4=1 表示居中裁剪
+# 纯色值只在背景层有意义（作为 CSS 背景色）。
+# 成功时：后缀 bg -> ICON_BG；否则 -> ICON_REL。调用方负责 ICON_SRC/ICON_SCALE。
+icon_value_apply() {
+  IVP="$1"; IVV="$2"; IVS="$3"; IVC="$4"
+  [ -n "$IVV" ] || return 1
+  case "$IVV" in
+    C:*)
+      if [ "$IVS" = "bg" ]; then ICON_BG="${IVV#C:}"; return 0; fi
+      return 1;;
+    S:*) ;;
+    *) return 1;;
+  esac
+  IVPATH="${IVV#S:}"
+  case "$IVPATH" in
+    *.png|*.webp|*.jpg|*.jpeg|*.gif)
+      if [ "$IVS" = "bg" ]; then
+        IVB="$TMP/.ivb.img"
+        $UNZIP -p "$IVP" "$IVPATH" 2>/dev/null | head -c 2097152 > "$IVB" 2>/dev/null
+        IVE=$(printf '%s' "$IVPATH" | sed 's/.*\.//' | tr 'A-Z' 'a-z')
+        if img_ok "$IVB" && icon_put "$IVB" "$IVE" "bg"; then
+          ICON_BG="$ICON_PUT_REL"; rm -f "$IVB"; return 0
+        fi
+        rm -f "$IVB"; return 1
+      fi
+      icon_install "$IVP" "$IVPATH" "arsc" || return 1
+      ICON_SCALE=1
+      return 0;;
+    *.xml)
+      IVF="$TMP/.iv.xml"; IVG="$TMP/.iv.svg"
+      apk_entry_text "$IVP" "$IVPATH" "$IVF" || return 1
+      IVR=1
+      if head -1 "$IVF" | grep -q '<gradient' 2>/dev/null; then
+        IVCR=""; [ "$IVC" = 1 ] && IVCR=$(icon_crop 108 108)
+        svg_gen gradient "108" "108" "$IVCR" < "$IVF" > "$IVG" 2>/dev/null
+        [ -s "$IVG" ] && svg_ok "$IVG" && icon_put "$IVG" svg "$IVS" && IVR=0
+      elif head -1 "$IVF" | grep -q '<vector' 2>/dev/null; then
+        IVW=$(sed -n 's/.*<vector[^>]*viewportWidth="\([0-9.]*\)".*/\1/p' "$IVF" | head -1)
+        IVH=$(sed -n 's/.*<vector[^>]*viewportHeight="\([0-9.]*\)".*/\1/p' "$IVF" | head -1)
+        [ -n "$IVW" ] || IVW=108
+        [ -n "$IVH" ] || IVH=108
+        # 填充色是资源引用（渐变）时，先查引用再翻译；纯色引用直接当背景色
+        IVREF=$(grep -o 'fillColor="@[0-9a-f]*"' "$IVF" 2>/dev/null | head -1 | sed 's/.*"@\([0-9a-f]*\)"/\1/')
+        IVLIT=$(grep -c 'fillColor="#' "$IVF" 2>/dev/null); [ -n "$IVLIT" ] || IVLIT=0
+        if [ -n "$IVREF" ] && [ "$IVLIT" = 0 ]; then
+          IVROWS=$(arsc_get "$IVP" "$IVREF") || IVROWS=""
+          IVVAL=$(printf '%s\n' "$IVROWS" | arsc_pick "$IVREF" "$DEV_DENSITY")
+          case "$IVVAL" in
+            C:*)
+              if [ "$IVS" = "bg" ]; then
+                ICON_BG="${IVVAL#C:}"; rm -f "$IVF" "$IVG"; return 0
+              fi;;
+            S:*)
+              IVP2="${IVVAL#S:}"; IV2F="$TMP/.iv2.xml"
+              if apk_entry_text "$IVP" "$IVP2" "$IV2F" && head -1 "$IV2F" | grep -q '<gradient' 2>/dev/null; then
+                IVCR=$(icon_crop "$IVW" "$IVH")
+                svg_gen gradient "$IVW" "$IVH" "$IVCR" < "$IV2F" > "$IVG" 2>/dev/null
+                [ -s "$IVG" ] && svg_ok "$IVG" && icon_put "$IVG" svg "$IVS" && IVR=0
+              fi
+              rm -f "$IV2F";;
+          esac
+        fi
+        if [ "$IVR" != 0 ]; then
+          IVCR=""; [ "$IVC" = 1 ] && IVCR=$(icon_crop "$IVW" "$IVH")
+          svg_gen vector "$IVW" "$IVH" "$IVCR" < "$IVF" > "$IVG" 2>/dev/null
+          [ -s "$IVG" ] && svg_ok "$IVG" && icon_put "$IVG" svg "$IVS" && IVR=0
+        fi
+      fi
+      rm -f "$IVF" "$IVG"
+      [ "$IVR" = 0 ] || return 1
+      if [ "$IVS" = "bg" ]; then ICON_BG="$ICON_PUT_REL"; else ICON_REL="$ICON_PUT_REL"; fi
+      return 0;;
+  esac
+  return 1
+}
+
+# 图标资源值 -> 图标（自适应图标拆成背景/前景两层）
+arsc_icon_apply() { # $1=apk $2=资源值
+  AIP="$1"; AIV="$2"
+  case "$AIV" in
+    S:*) ;;
+    *) return 1;;
+  esac
+  AIPATH="${AIV#S:}"
+  case "$AIPATH" in
+    *.xml)
+      AIT="$TMP/.ai.xml"
+      apk_entry_text "$AIP" "$AIPATH" "$AIT" || return 1
+      if head -1 "$AIT" | grep -q '<adaptive-icon' 2>/dev/null; then
+        icon_adaptive_apply "$AIP" "$AIT"
+        AIR=$?
+        rm -f "$AIT"
+        return $AIR
+      fi
+      rm -f "$AIT"
+      icon_value_apply "$AIP" "$AIV" "" 0 || return 1
+      ICON_SRC="vector"; ICON_SCALE=1
+      return 0;;
+    *)
+      icon_value_apply "$AIP" "$AIV" "" 0 || return 1
+      ICON_SCALE=1
+      return 0;;
+  esac
+}
+
+# 自适应图标：background 层（纯色/渐变/位图）+ foreground 层（矢量/位图）
+icon_adaptive_apply() { # $1=apk $2=行式 XML 文件
+  IAR="$1"; IAF="$2"
+  ABR=$(sed -n 's/.*<background[^>]*drawable="@\([0-9a-f]*\)".*/\1/p' "$IAF" | head -1)
+  AFR=$(sed -n 's/.*<foreground[^>]*drawable="@\([0-9a-f]*\)".*/\1/p' "$IAF" | head -1)
+  [ -n "$ABR$AFR" ] || return 1
+  IAQ="$ABR"
+  if [ -n "$ABR" ] && [ -n "$AFR" ]; then IAQ="$ABR,$AFR"; fi
+  if [ -z "$ABR" ]; then IAQ="$AFR"; fi
+  IAROWS=$(arsc_get "$IAR" "$IAQ") || IAROWS=""
+  [ -n "$IAROWS" ] || return 1
+  if [ -n "$ABR" ]; then
+    ABV=$(printf '%s\n' "$IAROWS" | arsc_pick "$ABR" "$DEV_DENSITY")
+    icon_value_apply "$IAR" "$ABV" "bg" 1 >/dev/null 2>&1
+  fi
+  if [ -n "$AFR" ]; then
+    AFV=$(printf '%s\n' "$IAROWS" | arsc_pick "$AFR" "$DEV_DENSITY")
+    icon_value_apply "$IAR" "$AFV" "" 0 >/dev/null 2>&1
+  fi
+  if [ -n "$ICON_REL" ]; then
+    ICON_SRC="adaptive"; ICON_SCALE=1.5
+    return 0
+  fi
+  return 1
+}
+
+# 应用名 + 图标的权威来源：resources.arsc
+arsc_meta() {
+  [ -n "$META_LABEL" ] && [ -n "$ICON_REL" ] && return 0
+  [ -n "$UNZIP" ] || return 1
+  AMF=""
+  if [ "$IS_SINGLE_ZIP" = 1 ]; then
+    AMF="$BUNDLE"
+  else
+    ALC="$APKMT_ICON_BASE_MAX"
+    awk -v a="$ALC" -v b="$APKMT_BASE_META_MAX" 'BEGIN{ exit !(b+0 > 0 && b+0 < a+0) }' && ALC="$APKMT_BASE_META_MAX"
+    ensure_base_apk "$ALC" || return 1
+    AMF="$BASE_APK_FILE"
+  fi
+  [ -n "$AMF" ] && [ -f "$AMF" ] || return 1
+  if [ -z "$META_LABEL_REF" ] && [ -z "$META_ICON_REF" ]; then
+    meta_from_apk_file "$AMF" >/dev/null 2>&1
+    if [ -z "$META_LABEL_REF" ] && [ -z "$META_ICON_REF" ]; then return 1; fi
+  fi
+  AID=""
+  if [ -z "$META_LABEL" ] && [ -n "$META_LABEL_REF" ]; then AID="$META_LABEL_REF"; fi
+  if [ -z "$ICON_REL" ] && [ -n "$ICON_DIR" ] && [ -n "$META_ICON_REF" ]; then
+    if [ -n "$AID" ]; then AID="$AID,"; fi
+    AID="$AID$META_ICON_REF"
+  fi
+  [ -n "$AID" ] || return 0
+  AROWS=$(arsc_get "$AMF" "$AID") || AROWS=""
+  if [ -z "$META_LABEL" ] && [ -n "$META_LABEL_REF" ] && [ -n "$AROWS" ]; then
+    ALV=$(printf '%s\n' "$AROWS" | arsc_pick "$META_LABEL_REF" "$DEV_DENSITY")
+    ALOOP=0
+    while [ "$ALOOP" -lt 2 ]; do
+      case "$ALV" in
+        R:*)
+          ALR="${ALV#R:}"
+          ALV=$(arsc_get "$AMF" "$ALR" | arsc_pick "$ALR" "$DEV_DENSITY");;
+        S:*)
+          ALB=$(printf '%s' "${ALV#S:}" | tr -d '|\r\n\t')
+          if [ -n "$ALB" ]; then META_LABEL="$ALB"; META_LABEL_SRC="arsc"; fi
+          break;;
+        *) break;;
+      esac
+      ALOOP=$((ALOOP + 1))
+    done
+  fi
+  if [ -z "$ICON_REL" ] && [ -n "$ICON_DIR" ] && [ -n "$META_ICON_REF" ] && [ -n "$AROWS" ]; then
+    AIV=$(printf '%s\n' "$AROWS" | arsc_pick "$META_ICON_REF" "$DEV_DENSITY")
+    arsc_icon_apply "$AMF" "$AIV"
+  fi
+  return 0
+}
+
+# 图标探测：xapk/apkm 根 icon.* -> resources.arsc -> res/mipmap* 文件名启发式
+probe_icon() {
+  ICON_REL=""; ICON_BG=""; ICON_SCALE=1; ICON_SRC="none"; ICON_DIR=""; ICON_PUT_REL=""
+  [ -n "$UNZIP" ] || return 0
+  MD=$(moddir_get 2>/dev/null) || MD=""
+  if [ -n "$MD" ]; then
+    ICON_DIR="$MD/webroot/icon-cache"
+    mkdir -p "$ICON_DIR" 2>/dev/null || ICON_DIR=""
+  fi
+  CE=""
+  # 1) 外层 bundle 根目录 icon.png（xapk/apkm 规范位置，零解析成本）
+  if [ "$IS_SINGLE_ZIP" != 1 ] && [ -n "$ICON_DIR" ]; then
+    CE=$(icon_entry_root)
+    if [ -n "$CE" ] && icon_install "$BUNDLE" "$CE" "root"; then
+      ICON_SCALE=1
+      arsc_meta >/dev/null 2>&1
+      prune_icons
+      return 0
+    fi
+  fi
+  # 2) resources.arsc：应用名 + 图标的权威来源（自适应图标会拆成背景/前景两层）
+  arsc_meta >/dev/null 2>&1
+  if [ -n "$ICON_REL" ]; then prune_icons; return 0; fi
+  # 3) 兜底：基础包里 res/mipmap* 的位图（资源名被混淆或 arsc 解析失败时）
   if [ -n "$BASE_APK_FILE" ] && [ -f "$BASE_APK_FILE" ]; then
     zip_table "$BASE_APK_FILE" > "$TMP/.basetbl" 2>/dev/null
     CE=$(icon_entry_apk "$TMP/.basetbl")
     rm -f "$TMP/.basetbl"
     if [ -n "$CE" ] && icon_install "$BASE_APK_FILE" "$CE" "mipmap"; then prune_icons; return 0; fi
   fi
-  # 3) 单文件 APK：单 APK 分支不建 TBL，这里自己列一次（只有一个文件，代价很小）
   if [ "$IS_SINGLE_ZIP" = 1 ]; then
     zip_table "$BUNDLE" > "$TMP/.selftbl" 2>/dev/null
     CE=$(icon_entry_apk "$TMP/.selftbl")
@@ -857,8 +1655,7 @@ probe_icon() {
     if [ -n "$CE" ] && icon_install "$BUNDLE" "$CE" "mipmap"; then prune_icons; return 0; fi
     return 0
   fi
-  # 4) xapk/apkm 的 JSON 齐全时没解基础包：体积够小才为图标解一次。
-  #    生效上限 = min(APKMT_ICON_BASE_MAX, APKMT_BASE_META_MAX)，见脚本头常量说明。
+  # 4) xapk/apkm 的 JSON 齐全时没解基础包：体积够小才为图标解一次
   if [ -z "$BASE_APK_FILE" ] && [ -n "$BASE_NAME" ]; then
     CBSZ=$(tbl_get "$BASE_NAME" "$TBL"); [ -n "$CBSZ" ] || CBSZ=0
     CLIM="$APKMT_ICON_BASE_MAX"
@@ -895,6 +1692,7 @@ prepare() {
   MODE="$2"; SPLITS="$3"; LANGPOL="$4"
   # 每个动作（inspect / install / action）都从干净状态开始
   BASE_APK_FILE=""; ICON_REL=""; ICON_SRC="none"; ICON_DIR=""; META_LABEL_SRC=""
+  ICON_BG=""; ICON_SCALE=1; META_LABEL_REF=""; META_ICON_REF=""
 
   [ -f "$BUNDLE" ] || { rec RESULT "FAIL|FILE_NOT_FOUND|$BUNDLE"; return 1; }
   [ -r "$BUNDLE" ] || { rec RESULT "FAIL|FILE_UNREADABLE|$BUNDLE"; return 1; }
@@ -1223,6 +2021,10 @@ print_meta() {
   rec META "label_src|${META_LABEL_SRC:-none}"
   rec META "icon|$ICON_REL"
   rec META "icon_src|$ICON_SRC"
+  rec META "icon_bg|$ICON_BG"
+  rec META "icon_scale|$ICON_SCALE"
+  rec META "label_ref|$META_LABEL_REF"
+  rec META "icon_ref|$META_ICON_REF"
   rec META "version|$META_VERSION"
   rec META "version_code|$META_VCODE"
   rec META "min_api|$META_MINAPI"
