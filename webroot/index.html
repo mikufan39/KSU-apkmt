@@ -91,7 +91,7 @@
           <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-install"/></svg>
         </span>
         <h2 class="blank-t">选择要安装的包</h2>
-        <p class="blank-p">支持 .apkm / .apks / .xapk / .apk。已 root，安装过程不会弹出系统安装器。</p>
+        <p class="blank-p">支持 .apkm / .apks / .xapk / .apk。</p>
         <div class="blank-act">
           <button class="btn btn--fill" id="btnGoFiles" type="button">浏览文件</button>
         </div>
@@ -108,20 +108,6 @@
           </div>
         </div>
         <div class="indet indet--line" aria-hidden="true"><i></i></div>
-      </article>
-      <article class="card">
-        <div class="pkg">
-          <span class="sk sk-ico"></span>
-          <div class="pkg-tx">
-            <span class="sk sk-line" style="width:64%"></span>
-            <span class="sk sk-line sk-line--sm" style="width:88%"></span>
-          </div>
-        </div>
-        <div class="kv">
-          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:110px"></span></div>
-          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:84px"></span></div>
-          <div class="kv-r"><span class="sk sk-line sk-line--sm" style="width:44px"></span><span class="sk sk-line sk-line--sm" style="width:130px"></span></div>
-        </div>
       </article>
     </div>
 
@@ -294,10 +280,6 @@
       </article>
 
       <div id="fileList"></div>
-
-      <p class="scr-note">
-        把从 APKMirror 下载的 .apkm / .apks / .xapk 放到 <code>/sdcard/Download</code> 就能在这里选到；读不到 <code>/sdcard</code> 时可以切到 <code>/data/media/0/Download</code>（同一个目录的 root 视角）。
-      </p>
     </div>
   </section>
 
@@ -370,6 +352,10 @@
             <circle class="ring-track" cx="60" cy="60" r="52"/>
             <circle class="ring-fill" id="runRingFill" cx="60" cy="60" r="52"/>
           </svg>
+          <div class="win-spin" aria-hidden="true">
+            <i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i>
+            <i style="--i:4"></i><i style="--i:5"></i><i style="--i:6"></i><i style="--i:7"></i>
+          </div>
           <div class="ring-mid">
             <span class="ring-pct" id="runPct">0%</span>
             <span class="ring-lbl" id="runStep">第 0 / 0 个分片</span>
@@ -401,7 +387,6 @@
       <article class="card"><div class="kv" id="doneKv"></div></article>
       <div class="dock dock--stack">
         <button class="btn btn--fill" id="btnOpenApp" type="button">打开应用</button>
-        <button class="btn btn--tint" id="btnAgain" type="button">再装一次</button>
       </div>
       <article class="card">
         <details class="disc">

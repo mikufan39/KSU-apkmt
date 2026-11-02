@@ -112,7 +112,7 @@
 
   function linesInspect(b) {
     var L = [];
-    L.push('META|engine_version|1.3.5');
+    L.push('META|engine_version|1.3.6');
     L.push('META|bundle|' + b.path);
     L.push('META|bundle_size|' + b.size);
     L.push('META|bundle_type|' + b.type);
@@ -188,7 +188,7 @@
 
   function linesDiag() {
     return [
-      'DIAG|engine_version|1.3.5',
+      'DIAG|engine_version|1.3.6',
       'DIAG|uid|0',
       'DIAG|whoami|uid=0(root) gid=0(root)',
       'DIAG|unzip|/data/adb/ksu/bin/busybox unzip',
@@ -296,7 +296,7 @@
       return [[
         '09:31:02 boot ksu=true exec=function spawn=function mInfo=function moddir=' + MODDIR,
         '09:31:03 probe code=0 got=true err=',
-        '09:31:03 diag code=0 engine=1.3.5 sdk=' + DEV.sdk,
+        '09:31:03 diag code=0 engine=1.3.6 sdk=' + DEV.sdk,
         '09:31:05 inspect ok type=apkm entries=12 sel=6 bytes=52024394 unzip=busybox pkg=com.instagram.android',
         '09:31:22 install done exit=0 mode=auto lang=sys result={"pkg":"com.instagram.android"} err='
       ], 0];
@@ -346,8 +346,9 @@
       setTimeout(function () { cb.emit('exit', code); }, 30);
       return;
     }
-    // 解析 / 安装：先停顿一下（真实设备上这一步本来就要等），再逐行吐记录
-    setTimeout(function () { play(lines, function () { cb.emit('exit', code); }); }, 650);
+    // 解析 / 安装：先停顿一下（真实设备上这一步本来就要等），再逐行吐记录。
+    // 安装前的停顿放长一些，好让「准备中」的不确定态（圆点转圈）在演示里看得清。
+    setTimeout(function () { play(lines, function () { cb.emit('exit', code); }); }, /install/.test(cmdline) ? 2200 : 650);
   }
 
   window.ksu = {
@@ -371,7 +372,7 @@
     toast: function () { },
     fullScreen: function () { },
     enableEdgeToEdge: function () { },
-    moduleInfo: function () { return JSON.stringify({ moduleDir: MODDIR, version: 'v1.3.5', versionCode: 10305 }); },
+    moduleInfo: function () { return JSON.stringify({ moduleDir: MODDIR, version: 'v1.3.6', versionCode: 10306 }); },
     exit: function () { }
   };
 })();

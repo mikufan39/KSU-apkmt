@@ -298,13 +298,6 @@
     write_test_ok: '分片校验完成', committing: '提交安装', done: '完成'
   };
   var BUNDLE_ZH = { apkm: '.apkm', apks: '.apks', xapk: '.xapk', apk: '单个 APK', zip: '未知压缩包' };
-  // 应用名 / 图标来源（META label_src = json|manifest|arsc|none；v1.3.3 起 arsc = 从资源表
-  // 解析资源引用。icon_src = json|root|mipmap|arsc|adaptive|vector|none，后三个为 v1.3.3 新增）
-  var LABEL_SRC_ZH = { json: '包内元数据', manifest: 'APK 清单', arsc: '资源表(ARSC)', none: '未找到' };
-  var ICON_SRC_ZH = {
-    json: '包内元数据', root: '包内图标文件', mipmap: 'APK 资源提取',
-    arsc: '资源表(ARSC)', adaptive: '自适应图标', vector: '矢量图标', none: '未找到'
-  };
   var DIAG_ZH = {
     engine_version: '引擎版本', uid: 'UID', whoami: '运行身份', unzip: 'unzip', pm: 'pm 命令',
     busybox: 'busybox', ksu_busybox: 'KernelSU busybox', state_dir: '状态目录',
@@ -387,6 +380,7 @@
 
   var ENG = '/data/adb/modules/apkmt/bin/apkmt.sh';
   var MODDIR = '/data/adb/modules/apkmt';
+  var REPO_URL = 'https://github.com/mikufan39/KSU-apkmt';
 
   var S = {
     ready: false,
@@ -758,20 +752,12 @@
       if (m.bundle_size) chips.appendChild(tag(fmtSize(m.bundle_size)));
       if (m.version) chips.appendChild(tag('v' + m.version));
       if (m.version_code) chips.appendChild(tag('build ' + m.version_code));
-      // 包名来源：manifest / info.json 是打包方写入的权威值，不必吓唬用户；
-      // 只有从 toc.pb 猜出来的、或完全没解析出来时才用警告色。
-      if (m.pkg_source) {
-        var srcKind = (m.pkg_source === 'toc.pb(guess)' || m.pkg_source === 'none') ? 'warn' : '';
-        chips.appendChild(tag('包名来源 ' + m.pkg_source, srcKind));
-      }
     }
 
     var kv = byId('pkgKv');
     clear(kv);
     kvInto(kv, '文件名', m.bundle || S.bundle, true, true);
     if (m.label && m.label !== byId('pkgName').textContent) kvInto(kv, '应用名', m.label);
-    if (m.label_src) kvInto(kv, '应用名来源', LABEL_SRC_ZH[m.label_src] || m.label_src);
-    if (m.icon_src) kvInto(kv, '图标来源', ICON_SRC_ZH[m.icon_src] || m.icon_src);
     kvInto(kv, 'minSdk', m.min_api);
     kvInto(kv, 'targetSdk', m.target_api);
     kvInto(kv, '原生 ABI', m.device_abi);
@@ -1094,7 +1080,6 @@
     if (ok.pkg) rows.push(['包名', ok.pkg]);
     if (ok.ver) rows.push(['已安装版本', ok.ver]);
     rows.push(['方式', S.mode === 'auto' ? '推荐分片' : (S.mode === 'all' ? '全部分片' : '手动分片')]);
-    rows.push(['提示', 'root 静默安装，没有经过系统安装器。']);
     showDone({
       title: '安装成功',
       text: (S.meta.label || ok.pkg || '应用') + ' 已经装到系统里了。',
@@ -1135,7 +1120,7 @@
 
   /* ============================================================ 选包页 */
 
-  var QUICK = ['/sdcard/Download', '/sdcard', '/storage/emulated/0/Download', '/data/media/0/Download', '/data/local/tmp'];
+  var QUICK = ['/sdcard/Download', '/sdcard', '/storage/emulated/0/Download', '/data/media/0/Download'];
 
   function joinPath(dir, name) { return (dir.replace(/\/+$/, '') || '') + '/' + name; }
 
@@ -1303,9 +1288,6 @@
     var rows = [];
     for (var i = items.length - 1; i >= 0 && rows.length < 60; i--) rows.push(items[i]);
 
-    var lastOk = null;
-    for (var k = 0; k < rows.length; k++) { if (rows[k].ok && rows[k].pkg) { lastOk = rows[k]; break; } }
-
     var list = el('article', 'card');
     rows.forEach(function (it) {
       var row = el('div', 'hrow');
@@ -1322,17 +1304,6 @@
       list.appendChild(row);
     });
     box.appendChild(list);
-
-    // 注意：这里**不能**用 .dock —— .dock 是 position: fixed 的底部操作条，
-    // 塞进列表里会变成第二根固定操作条，叠在真正的底部按钮上方（残影的来源）。
-    if (lastOk) {
-      var actCard = el('article', 'card hact');
-      var bOpen = el('button', 'btn btn--tint', '打开最近安装的应用');
-      bOpen.type = 'button';
-      bOpen.onclick = function () { openApp(lastOk.pkg); };
-      actCard.appendChild(bOpen);
-      box.appendChild(actCard);
-    }
   }
 
   function openApp(pkg) {
@@ -1410,9 +1381,28 @@
     kvInto(box, '引擎版本', S.meta.engine_version || '—');
     kvInto(box, '模块目录', MODDIR, true, true);
     kvInto(box, '引擎脚本', ENG, true, true);
-    kvInto(box, '包名与版本', '来自包内 manifest / info.json（打包方写入的权威值）；两者都没有时才从 toc.pb 猜测。');
-    kvInto(box, '应用名 / 图标', '优先级：info.json / manifest.json → resources.arsc（资源引用）→ manifest 字面量 → 文件名 / 首字母。');
-    kvInto(box, 'APK 图标', '.apk 的图标从资源表（resources.arsc）解析；自适应图标按「背景层 + 前景层」分层渲染，前景层取 108dp 画布、只保留中间 72dp 可见安全区。');
+    kvInto(box, '作者', 'Mikufan');
+    var link = el('a', 'kv-link mono dir', REPO_URL);
+    link.href = REPO_URL;
+    link.rel = 'noopener noreferrer';
+    link.onclick = function (ev) { ev.preventDefault(); openUrl(REPO_URL); };
+    kvIntoNode(box, 'GitHub', link);
+  }
+
+  // 外链：KernelSU / MMRL 的 WebView 各给了不同的打开方式，都没有时退回复制
+  function openUrl(url) {
+    try {
+      if (window.ksu && typeof window.ksu.openUrl === 'function') { window.ksu.openUrl(url); return; }
+      if (window.open(url, '_blank')) return;
+    } catch (e) { /* 落到复制 */ }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url);
+        toast('链接已复制');
+        return;
+      }
+    } catch (e2) { }
+    toast(url);
   }
 
   function loadVerifier() {
@@ -1572,6 +1562,10 @@
     if (kind === 'files') { setScreen('files', null, { back: null }); browse('/sdcard/Download'); }
     else if (kind === 'history') { setScreen('history', null, { back: null }); loadHistory(true); }
     else if (kind === 'diag') { setScreen('diag', null, { back: null }); loadDiag(); }
+    else if (kind === 'running') {
+      setScreen('running', 'scrRunning', { title: '正在安装' });
+      setProgress(null, '准备中', '正在创建安装会话…', '—');
+    }
   }
 
   function initOptions() {
@@ -1650,7 +1644,6 @@
     if (byId('btnTestWrite')) byId('btnTestWrite').onclick = function () { runInstall(true); };
     if (byId('btnErrRetry')) byId('btnErrRetry').onclick = function () { runInstall(S.testWrite); };
     if (byId('btnErrChoose')) byId('btnErrChoose').onclick = function () { setScreen('files', null, { back: null }); };
-    if (byId('btnAgain')) byId('btnAgain').onclick = function () { runInstall(S.testWrite); };
     if (byId('btnOpenApp')) byId('btnOpenApp').onclick = function () { openApp(S.okPkg); };
 
     if (byId('optFilter')) byId('optFilter').onchange = function () { browse(S.dir); };

@@ -1,6 +1,6 @@
 #!/system/bin/sh
 # ==============================================================================
-#  APKM 直装器 (apkmt) 引擎  v1.3.5
+#  APKM 直装器 (apkmt) 引擎  v1.3.6
 #  纯 POSIX sh。KernelSU WebUI / action.sh / CLI 共用同一套逻辑。
 #
 #  输出协议：每行一条记录，字段用 | 分隔（引擎输出保持纯 ASCII，中文在 WebUI 层）
@@ -55,7 +55,7 @@
 #    apkmt.sh action
 # ==============================================================================
 
-APKMT_VERSION="1.3.5"
+APKMT_VERSION="1.3.6"
 STATE_DIR="/data/adb/apkmt"
 TMP_BASE="/data/local/tmp/apkmt"
 # 模块目录（v1.3.2）：预装阶段要把包内图标落到 webroot/icon-cache/。WebUI 的资源

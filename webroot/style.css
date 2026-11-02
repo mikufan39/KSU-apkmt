@@ -298,14 +298,32 @@ body[data-boot="1"] .bootbar { opacity: 1; }
 }
 .ring-lbl { font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* 环的不确定态：只跑前端弧段，不假装 0% */
-.ring.is-indet .ring-fill {
-  stroke-dasharray: 96 276.46;
-  animation: spin 1s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  transition: none;
+/* 环的不确定态（准备中 / 准备写入）：换成 Windows 11 的线条转圈——
+   八个等距圆点，一个亮点沿圆周匀速推进，后面几点渐隐；出现百分比后回到进度环。
+   弧段与中间数字在这种状态下都让位，避免「0% + 独立弧段」假装有进度。 */
+.ring.is-indet .ring-svg,
+.ring.is-indet .ring-mid { display: none; }
+
+.win-spin { position: absolute; inset: 0; display: none; --orbit: 56px; --dot: 8px; }
+.ring--lg .win-spin { --orbit: 82px; --dot: 10px; }
+.ring.is-indet .win-spin { display: block; }
+.win-spin i {
+  position: absolute; top: 50%; left: 50%;
+  width: var(--dot); height: var(--dot);
+  margin: calc(var(--dot) / -2) 0 0 calc(var(--dot) / -2);
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.12;
+  transform: rotate(calc(var(--i) * 45deg)) translateY(calc(-1 * var(--orbit)));
+  animation: win-spin 1.2s linear infinite;
+  animation-delay: calc(var(--i) * 0.15s);
 }
-.ring--lg.is-indet .ring-fill { stroke-dasharray: 110 326.73; }
-.ring.is-indet .ring-pct { display: none; }
+@keyframes win-spin {
+  0% { opacity: 0.12; }
+  9% { opacity: 1; }
+  20% { opacity: 0.5; }
+  45%, 100% { opacity: 0.12; }
+}
 
 /* 展开 / 收起：grid-template-rows 0fr→1fr 的平滑高度动画 */
 .disc > summary {
@@ -413,6 +431,12 @@ body[data-boot="1"] #tabbar { opacity: 0.45; pointer-events: none; }
 }
 .kv-v.mono { font-family: var(--font-mono); font-size: 12.5px; }
 .kv-v.dir { direction: ltr; }
+/* 关于卡里的外链：长 URL 可断行，点击态与焦点环都要看得见 */
+.kv-link { color: var(--accent); text-decoration: none; word-break: break-all; }
+.kv-link:active { opacity: 0.65; }
+.kv-link:focus-visible {
+  outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm);
+}
 
 /* 分段控件：底槽 + 可滑动胶囊 */
 .seg {
@@ -552,10 +576,6 @@ body[data-boot="1"] #tabbar { opacity: 0.45; pointer-events: none; }
 .dock--stack .btn { flex: 1 1 auto !important; }
 /* 只做淡入：.dock 是 position: fixed，动画里带 transform 会有同样的包含块问题，风险不值当。 */
 @keyframes dockIn { from { opacity: 0; } to { opacity: 1; } }
-
-/* 随内容滚动的一行操作（历史页「打开最近安装的应用」）。不能用 .dock：
-   .dock 是 fixed 的底部操作条，放进列表会叠出第二根条。 */
-.hact { padding: var(--space-4); }
 
 /* 文本辅助 */
 .hint { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-top: var(--space-3); }
@@ -822,6 +842,7 @@ body[data-boot="1"] #tabbar { opacity: 0.45; pointer-events: none; }
   .bar > i::after { display: none; }
   .spinner { border-top-color: var(--border); border-right-color: var(--accent); }
   .ring.is-indet .ring-fill { stroke-dasharray: 138 276.46; animation: none !important; }
+  .win-spin i { opacity: 0.45 !important; animation: none !important; }
   .sk { animation: none !important; background: color-mix(in oklab, var(--fg), transparent 90%); }
   .screen, .dock, .crit-ico, .disc[open] > .code { animation: none !important; }
 }
